@@ -65,7 +65,7 @@ export default function App() {
   // Load user + projects
 useEffect(() => {
   (async () => {
-    // Ensure we have a session
+    // ensure session
     const { data: sess } = await supabase.auth.getSession();
     if (!sess?.session) {
       const email = import.meta.env.VITE_DEMO_EMAIL as string;
@@ -75,22 +75,29 @@ useEffect(() => {
       if (signInErr) { setErr(`Sign-in failed: ${signInErr.message}`); return; }
       setCurrentUserEmail(signInData.user?.email ?? null);
     } else {
-      // already signed in → fetch user and set email
       const { data: userData } = await supabase.auth.getUser();
       setCurrentUserEmail(userData.user?.email ?? null);
     }
 
-    // Now fetch projects
+    // fetch ALL projects (no pagination surprises)
     const { data, error } = await supabase
       .from("projects")
       .select("id,name,status,created_at")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(1000);
 
     if (error) { setErr(error.message); return; }
+
+    console.log("Projects fetched:", data?.length, data?.map(p => p.name));
     setProjects(data ?? []);
-    if (!activeProjectId && data && data.length > 0) setActiveProjectId(data[0].id);
+    // set default active if not set yet
+    if (!activeProjectId && data && data.length > 0) {
+      setActiveProjectId(data[0].id);
+    }
   })();
-}, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []); // run once on mount
+
 
 
   // Load criteria + notes for active project
@@ -286,6 +293,24 @@ useEffect(() => {
               </option>
             ))}
           </select>
+		  <div className="text-sm text-slate-600 flex items-center gap-2">
+  <span>Projects: {projects?.length ?? 0}</span>
+  <button
+    className="rounded-md border px-2 py-1"
+    onClick={async () => {
+      const { data, error } = await supabase
+        .from("projects")
+        .select("id,name,status,created_at")
+        .order("created_at", { ascending: false })
+        .limit(1000);
+      if (error) { setErr(error.message); return; }
+      console.log("Manual refresh projects:", data?.length, data?.map(p => p.name));
+      setProjects(data ?? []);
+    }}
+  >
+    Refresh
+  </button>
+</div>
         </div>
 
         {/* error banner so TS doesn't warn + helpful UX */}
