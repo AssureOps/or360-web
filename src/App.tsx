@@ -63,42 +63,22 @@ export default function App() {
   const [sizeFilter, setSizeFilter] = useState<"All" | "S" | "M" | "L">("All");
 
   // Load user + projects
-useEffect(() => {
-  (async () => {
-    // ensure session
-    const { data: sess } = await supabase.auth.getSession();
-    if (!sess?.session) {
-      const email = import.meta.env.VITE_DEMO_EMAIL as string;
-      const password = import.meta.env.VITE_DEMO_PASSWORD as string;
-      const { data: signInData, error: signInErr } =
-        await supabase.auth.signInWithPassword({ email, password });
-      if (signInErr) { setErr(`Sign-in failed: ${signInErr.message}`); return; }
-      setCurrentUserEmail(signInData.user?.email ?? null);
-    } else {
-      const { data: userData } = await supabase.auth.getUser();
-      setCurrentUserEmail(userData.user?.email ?? null);
-    }
-
-    // fetch ALL projects (no pagination surprises)
-    const { data, error } = await supabase
-      .from("projects")
-      .select("id,name,status,created_at")
-      .order("created_at", { ascending: false })
-      .limit(1000);
-
-    if (error) { setErr(error.message); return; }
-
-    console.log("Projects fetched:", data?.length, data?.map(p => p.name));
-    setProjects(data ?? []);
-    // set default active if not set yet
-    if (!activeProjectId && data && data.length > 0) {
-      setActiveProjectId(data[0].id);
-    }
-  })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []); // run once on mount
-
-
+  useEffect(() => {
+    (async () => {
+      const { data: user } = await supabase.auth.getUser();
+      setCurrentUserEmail(user?.user?.email ?? null);
+      const { data, error } = await supabase
+        .from("projects")
+        .select("id,name,status,created_at")
+        .order("created_at", { ascending: false });
+      if (error) {
+        setErr(error.message);
+        return;
+      }
+      setProjects(data ?? []);
+      if (!activeProjectId && data && data.length > 0) setActiveProjectId(data[0].id);
+    })();
+  }, []);
 
   // Load criteria + notes for active project
   useEffect(() => {
@@ -293,24 +273,23 @@ useEffect(() => {
               </option>
             ))}
           </select>
-		  <div className="text-sm text-slate-600 flex items-center gap-2">
-  <span>Projects: {projects?.length ?? 0}</span>
-  <button
-    className="rounded-md border px-2 py-1"
-    onClick={async () => {
-      const { data, error } = await supabase
-        .from("projects")
-        .select("id,name,status,created_at")
-        .order("created_at", { ascending: false })
-        .limit(1000);
-      if (error) { setErr(error.message); return; }
-      console.log("Manual refresh projects:", data?.length, data?.map(p => p.name));
-      setProjects(data ?? []);
-    }}
-  >
-    Refresh
-  </button>
-</div>
+        </div>
+
+        {/* Project debug/quick switcher */}
+        <div className="mt-2 flex items-center gap-3 text-sm text-slate-600">
+          <span>Projects: {projects?.length ?? 0}</span>
+          <div className="flex flex-wrap gap-2">
+            {projects?.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setActiveProjectId(p.id)}
+                className={`rounded-full border px-2 py-1 ${activeProjectId === p.id ? "bg-slate-200" : "bg-white"}`}
+                title={p.id}
+              >
+                {p.name}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* error banner so TS doesn't warn + helpful UX */}
