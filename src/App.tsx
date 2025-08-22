@@ -63,22 +63,35 @@ export default function App() {
   const [sizeFilter, setSizeFilter] = useState<"All" | "S" | "M" | "L">("All");
 
   // Load user + projects
-  useEffect(() => {
-    (async () => {
-      const { data: user } = await supabase.auth.getUser();
-      setCurrentUserEmail(user?.user?.email ?? null);
-      const { data, error } = await supabase
-        .from("projects")
-        .select("id,name,status,created_at")
-        .order("created_at", { ascending: false });
-      if (error) {
-        setErr(error.message);
-        return;
-      }
-      setProjects(data ?? []);
-      if (!activeProjectId && data && data.length > 0) setActiveProjectId(data[0].id);
-    })();
-  }, []);
+useEffect(() => {
+  (async () => {
+    // Ensure we have a session
+    const { data: sess } = await supabase.auth.getSession();
+    if (!sess?.session) {
+      const email = import.meta.env.VITE_DEMO_EMAIL as string;
+      const password = import.meta.env.VITE_DEMO_PASSWORD as string;
+      const { data: signInData, error: signInErr } =
+        await supabase.auth.signInWithPassword({ email, password });
+      if (signInErr) { setErr(`Sign-in failed: ${signInErr.message}`); return; }
+      setCurrentUserEmail(signInData.user?.email ?? null);
+    } else {
+      // already signed in → fetch user and set email
+      const { data: userData } = await supabase.auth.getUser();
+      setCurrentUserEmail(userData.user?.email ?? null);
+    }
+
+    // Now fetch projects
+    const { data, error } = await supabase
+      .from("projects")
+      .select("id,name,status,created_at")
+      .order("created_at", { ascending: false });
+
+    if (error) { setErr(error.message); return; }
+    setProjects(data ?? []);
+    if (!activeProjectId && data && data.length > 0) setActiveProjectId(data[0].id);
+  })();
+}, []);
+
 
   // Load criteria + notes for active project
   useEffect(() => {
