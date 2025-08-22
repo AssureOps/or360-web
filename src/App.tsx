@@ -101,10 +101,11 @@ export default function App() {
 
       const ids = (crits ?? []).map((c: any) => c.id);
       if (ids.length) {
-        const { data: ev } = await supabase
+        const { data: ev, error: evErr } = await supabase
           .from("evidence")
           .select("id,criterion_id,kind,note,url,uploaded_at,created_by")
           .in("criterion_id", ids);
+        if (evErr) setErr(evErr.message);
         setNotes(ev ?? []);
       } else {
         setNotes([]);
@@ -150,48 +151,45 @@ export default function App() {
   }, [criteria]);
 
   // Actions
-async function handleUpdateStatus(id: string, status: Criterion["status"]) {
-  const snapshot = criteria; // for rollback
-  setCriteria(prev => prev?.map(c => c.id === id ? { ...c, status } : c) ?? prev);
+  async function handleUpdateStatus(id: string, status: Criterion["status"]) {
+    const snapshot = criteria; // for rollback
+    // optimistic UI
+    setCriteria(prev => prev?.map(c => c.id === id ? { ...c, status } : c) ?? prev);
 
-  const { data, error } = await supabase
-    .from("criteria")
-    .update({ status })
-    .eq("id", id)
-    .select("id,status")
-    .single(); // forces an error if zero rows updated or blocked by RLS
+    // Use RPC that safely casts text -> enum in DB
+    const { error } = await supabase
+      .rpc("set_criterion_status", { p_id: id, p_status: status });
 
-  if (error) {
-    console.error("Status update failed:", error);
-    setErr(`Failed to update status: ${error.message}`);
-    setCriteria(snapshot); // rollback
-    return;
+    if (error) {
+      console.error("Status update failed:", error);
+      setErr(`Failed to update status: ${error.message}`);
+      setCriteria(snapshot); // rollback UI
+      return;
+    }
+
+    const label =
+      status === "not_started" ? "Not started" :
+      status === "in_progress" ? "In progress" :
+      status === "done"        ? "Done" :
+      status === "delayed"     ? "Delayed" : String(status);
+
+    // add an audit note
+    await supabase.from("evidence").insert({
+      criterion_id: id,
+      kind: "note",
+      note: `Status changed to: ${label}`,
+      created_by: currentUserEmail
+    });
+
+    setNotes(prev => [{
+      id: Math.random().toString(),
+      criterion_id: id,
+      kind: "note",
+      note: `Status changed to: ${label}`,
+      uploaded_at: new Date().toISOString(),
+      created_by: currentUserEmail ?? "Unknown",
+    }, ...prev]);
   }
-
-  const label =
-    status === "not_started" ? "Not started" :
-    status === "in_progress" ? "In progress" :
-    status === "done"        ? "Done" :
-    status === "delayed"     ? "Delayed" : String(status);
-
-  await supabase.from("evidence").insert({
-    criterion_id: id,
-    kind: "note",
-    note: `Status changed to: ${label}`,
-    created_by: currentUserEmail
-  });
-
-  setNotes(prev => [{
-    id: Math.random().toString(),
-    criterion_id: id,
-    kind: "note",
-    note: `Status changed to: ${label}`,
-    uploaded_at: new Date().toISOString(),
-    created_by: currentUserEmail ?? "Unknown",
-  }, ...prev]);
-}
-
-
 
   async function addNote(criterionId: string, text: string) {
     const v = text.trim();
@@ -276,6 +274,11 @@ async function handleUpdateStatus(id: string, status: Criterion["status"]) {
             ))}
           </select>
         </div>
+
+        {/* error banner so TS doesn't warn + helpful UX */}
+        {err && (
+          <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-red-700">{err}</div>
+        )}
 
         {/* Overall progress */}
         {stats.total > 0 && (
@@ -515,7 +518,7 @@ function CriterionCard({
             <div className="space-y-2">
               <div className="flex flex-wrap gap-2">
                 <input
-                  className="flex-1 min-w-[240px] rounded-md border px-2 py-1 text-sm"
+                  className="min-w-[240px] flex-1 rounded-md border px-2 py-1 text-sm"
                   placeholder="Paste a URL…"
                   value={linkUrl}
                   onChange={(e) => setLinkUrl(e.target.value)}
@@ -529,7 +532,7 @@ function CriterionCard({
                   }}
                   className="rounded-md border bg-white px-3 py-1 text-sm hover:bg-slate-100"
                 >
-                Add URL
+                  Add URL
                 </button>
                 <label className="flex cursor-pointer items-center gap-2 rounded-md border bg-white px-3 py-1 text-sm hover:bg-slate-100">
                   <Paperclip size={14} /> Upload file
