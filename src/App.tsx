@@ -1,385 +1,580 @@
-// src/App.tsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
-import { ChevronDown, ChevronRight } from "lucide-react"; // nice icons
+import { ChevronDown, ChevronRight, Paperclip, Link as LinkIcon, StickyNote } from "lucide-react";
 
-type Project = { id: string; name: string; status?: string | null };
-type Criterion = { id: string; title: string; status: string };
-type Evidence = {
+// --- Types ---
+export type Criterion = {
   id: string;
-  kind: string;
-  note?: string | null;
-  url?: string | null;
+  project_id: string;
+  title: string;
+  status: "not_started" | "in_progress" | "done" | "delayed" | string;
+  category?: string | null;
+  created_at?: string;
+  meta?: any;
+};
+
+export type Note = {
+  id: string;
+  criterion_id: string;
+  kind: "note" | "link" | "file";
+  note?: string;
+  url?: string;
   uploaded_at: string;
-  criterion_id?: string;
+  created_by?: string;
 };
 
-const statusChip: Record<string, string> = {
-  not_started:
-    "bg-gray-100 text-gray-800 ring-1 ring-inset ring-gray-200",
-  in_progress:
-    "bg-amber-100 text-amber-900 ring-1 ring-inset ring-amber-200",
-  done:
-    "bg-emerald-100 text-emerald-900 ring-1 ring-inset ring-emerald-200",
+export type Project = {
+  id: string;
+  name: string;
+  status: string;
+  created_at: string;
 };
 
+// --- UI helpers ---
+const priorityBadge = (p?: string) => {
+  if (!p) return null;
+  const base = "text-xs rounded-full border px-2 py-0.5";
+  if (p === "High") return <span className={`${base} border-red-300 bg-red-50 text-red-700`}>Priority: High</span>;
+  if (p === "Medium") return <span className={`${base} border-amber-300 bg-amber-50 text-amber-700`}>Priority: Medium</span>;
+  if (p === "Low") return <span className={`${base} border-slate-300 bg-slate-50 text-slate-700`}>Priority: Low</span>;
+  return <span className={`${base} border-slate-300`}>Priority: {p}</span>;
+};
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="rounded-2xl border bg-slate-50 p-6 text-center text-slate-600">{message}</div>
+  );
+}
+
+// ==========================================================
+// App
+// ==========================================================
 export default function App() {
-  const demoEmail = import.meta.env.VITE_DEMO_EMAIL as string;
-  const demoPassword = import.meta.env.VITE_DEMO_PASSWORD as string;
+  const [projects, setProjects] = useState<Project[] | null>(null);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [criteria, setCriteria] = useState<Criterion[] | null>(null);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
-  // Auth / session
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [sessionReady, setSessionReady] = useState(false);
+  // filters
+  const [search, setSearch] = useState("");
+  const [sizeFilter, setSizeFilter] = useState<"All" | "S" | "M" | "L">("All");
 
-  // Data
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [activeProject, setActiveProject] = useState<Project | null>(null);
-  const [criteria, setCriteria] = useState<Criterion[]>([]);
-  const [evidence, setEvidence] = useState<Evidence[]>([]);
-  const [addingNoteFor, setAddingNoteFor] = useState<string | null>(null);
-  const [noteText, setNoteText] = useState("");
-  const [openEvidence, setOpenEvidence] = useState<Record<string, boolean>>({});
-
-  // Derived
-  const readiness = useMemo(() => {
-    if (!criteria.length) return 0;
-    const done = criteria.filter((c) => c.status === "done").length;
-    return Math.round((done / criteria.length) * 100);
-  }, [criteria]);
-
-  // --- Auth bootstrap ---
+  // Load user + projects
   useEffect(() => {
-    let mounted = true;
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
-      setUserEmail(data.session?.user?.email ?? null);
-      setSessionReady(true);
-    })();
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
-      setUserEmail(s?.user?.email ?? null)
-    );
-    return () => sub.subscription.unsubscribe();
-  }, []);
-
-  async function signIn() {
-    const { error } = await supabase.auth.signInWithPassword({
-      email: demoEmail,
-      password: demoPassword,
-    });
-    if (error) alert("Sign-in failed: " + error.message);
-  }
-  async function signOut() {
-    await supabase.auth.signOut();
-  }
-
-  // --- Load projects ---
-  useEffect(() => {
-    if (!sessionReady) return;
-    (async () => {
+      const { data: user } = await supabase.auth.getUser();
+      setCurrentUserEmail(user?.user?.email ?? null);
       const { data, error } = await supabase
         .from("projects")
-        .select("id,name,status")
-        .order("name", { ascending: true });
+        .select("id,name,status,created_at")
+        .order("created_at", { ascending: false });
       if (error) {
-        console.error(error);
-        alert("Failed to load projects: " + error.message);
+        setErr(error.message);
         return;
       }
-      setProjects((data || []) as Project[]);
-      if (data && data.length > 0) setActiveProject(data[0] as Project);
+      setProjects(data ?? []);
+      if (!activeProjectId && data && data.length > 0) setActiveProjectId(data[0].id);
     })();
-  }, [sessionReady, userEmail]);
+  }, []);
 
-  // --- Load criteria for active project ---
+  // Load criteria + notes for active project
   useEffect(() => {
-    if (!activeProject) return;
+    if (!activeProjectId) return;
+    setLoading(true);
+    setErr(null);
     (async () => {
-      const { data, error } = await supabase
+      const { data: crits, error } = await supabase
         .from("criteria")
-        .select("id,title,status")
-        .eq("project_id", activeProject.id)
+        .select("id,project_id,title,status,category,meta,created_at")
+        .eq("project_id", activeProjectId)
+        .order("category", { ascending: true })
         .order("title", { ascending: true });
       if (error) {
-        console.error(error);
-        alert("Failed to load criteria: " + error.message);
+        setErr(error.message);
+        setLoading(false);
         return;
       }
-      setCriteria((data || []) as Criterion[]);
-    })();
-  }, [activeProject]);
+      setCriteria(crits as Criterion[] | null);
 
-  // --- Load evidence for those criteria ---
-  useEffect(() => {
-    if (!criteria.length) {
-      setEvidence([]);
-      return;
-    }
-    (async () => {
-      const ids = criteria.map((c) => c.id);
-      const { data, error } = await supabase
-        .from("evidence")
-        .select("id,criterion_id,kind,note,url,uploaded_at")
-        .in("criterion_id", ids)
-        .order("uploaded_at", { ascending: false });
-      if (error) {
-        console.error(error);
-        return;
+      const ids = (crits ?? []).map((c: any) => c.id);
+      if (ids.length) {
+        const { data: ev } = await supabase
+          .from("evidence")
+          .select("id,criterion_id,kind,note,url,uploaded_at,created_by")
+          .in("criterion_id", ids);
+        setNotes(ev ?? []);
+      } else {
+        setNotes([]);
       }
-      setEvidence((data || []) as Evidence[]);
+      setLoading(false);
     })();
+  }, [activeProjectId]);
+
+  // Derived collections
+  const filtered = useMemo(() => {
+    const list = criteria ?? [];
+    const q = search.trim().toLowerCase();
+    return list.filter((c) => {
+      if (sizeFilter !== "All" && c.meta?.size !== sizeFilter) return false;
+      if (!q) return true;
+      const hay = [c.title, c.category ?? "", c.meta?.description ?? "", ...(c.meta?.prompts ?? [])]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [criteria, search, sizeFilter]);
+
+  const grouped = useMemo(() => {
+    const acc: Record<string, Criterion[]> = {};
+    for (const c of filtered) {
+      const k = c.category ?? "Uncategorised";
+      (acc[k] ||= []).push(c);
+    }
+    return acc;
+  }, [filtered]);
+
+  const categories = useMemo(() => Object.keys(grouped), [grouped]);
+
+  // overall stats
+  const stats = useMemo(() => {
+    const all = criteria ?? [];
+    const total = all.length;
+    const done = all.filter((c) => c.status === "done").length;
+    const inprog = all.filter((c) => c.status === "in_progress").length;
+    const delayed = all.filter((c) => c.status === "delayed").length;
+    const notStarted = total - done - inprog - delayed;
+    return { total, done, inprog, delayed, notStarted };
   }, [criteria]);
 
-  async function setStatus(id: string, status: string) {
-    const { error } = await supabase.from("criteria").update({ status }).eq("id", id).select();
-    if (error) return alert("Update failed: " + error.message);
-    setCriteria((prev) => prev.map((c) => (c.id === id ? { ...c, status } : c)));
+  // Actions
+async function handleUpdateStatus(id: string, status: Criterion["status"]) {
+  const snapshot = criteria; // for rollback
+  setCriteria(prev => prev?.map(c => c.id === id ? { ...c, status } : c) ?? prev);
+
+  const { data, error } = await supabase
+    .from("criteria")
+    .update({ status })
+    .eq("id", id)
+    .select("id,status")
+    .single(); // forces an error if zero rows updated or blocked by RLS
+
+  if (error) {
+    console.error("Status update failed:", error);
+    setErr(`Failed to update status: ${error.message}`);
+    setCriteria(snapshot); // rollback
+    return;
   }
 
-  async function addNote(criterionId: string) {
-    const text = noteText.trim();
-    if (!text) return;
-    const { error } = await supabase
-      .from("evidence")
-      .insert({ criterion_id: criterionId, kind: "note", note: text })
-      .select();
-    if (error) return alert("Insert failed: " + error.message);
-    setNoteText("");
-    setAddingNoteFor(null);
+  const label =
+    status === "not_started" ? "Not started" :
+    status === "in_progress" ? "In progress" :
+    status === "done"        ? "Done" :
+    status === "delayed"     ? "Delayed" : String(status);
 
-    // refresh evidence for this criterion
-    const { data } = await supabase
+  await supabase.from("evidence").insert({
+    criterion_id: id,
+    kind: "note",
+    note: `Status changed to: ${label}`,
+    created_by: currentUserEmail
+  });
+
+  setNotes(prev => [{
+    id: Math.random().toString(),
+    criterion_id: id,
+    kind: "note",
+    note: `Status changed to: ${label}`,
+    uploaded_at: new Date().toISOString(),
+    created_by: currentUserEmail ?? "Unknown",
+  }, ...prev]);
+}
+
+
+
+  async function addNote(criterionId: string, text: string) {
+    const v = text.trim();
+    if (!v) return;
+    await supabase
       .from("evidence")
-      .select("id,criterion_id,kind,note,url,uploaded_at")
-      .eq("criterion_id", criterionId)
-      .order("uploaded_at", { ascending: false });
-    setEvidence((prev) => {
-      const others = prev.filter((e) => e.criterion_id !== criterionId);
-      return [...others, ...(data || [])];
-    });
+      .insert({ criterion_id: criterionId, kind: "note", note: v, created_by: currentUserEmail });
+    setNotes((prev) => [
+      {
+        id: Math.random().toString(),
+        criterion_id: criterionId,
+        kind: "note",
+        note: v,
+        uploaded_at: new Date().toISOString(),
+        created_by: currentUserEmail ?? "Unknown",
+      },
+      ...prev,
+    ]);
   }
 
-  // ---------- UI ----------
+  async function addLink(criterionId: string, url: string) {
+    const v = url.trim();
+    if (!v) return;
+    await supabase
+      .from("evidence")
+      .insert({ criterion_id: criterionId, kind: "link", url: v, created_by: currentUserEmail });
+    setNotes((prev) => [
+      {
+        id: Math.random().toString(),
+        criterion_id: criterionId,
+        kind: "link",
+        url: v,
+        uploaded_at: new Date().toISOString(),
+        created_by: currentUserEmail ?? "Unknown",
+      },
+      ...prev,
+    ]);
+  }
+
+  async function uploadFile(criterionId: string, file: File) {
+    const path = `${criterionId}/${Date.now()}-${file.name}`;
+    const { error } = await supabase.storage.from("evidence").upload(path, file);
+    if (error) {
+      alert("Upload failed: " + error.message);
+      return;
+    }
+    const { data: pub } = supabase.storage.from("evidence").getPublicUrl(path);
+    await supabase
+      .from("evidence")
+      .insert({ criterion_id: criterionId, kind: "file", url: pub.publicUrl, created_by: currentUserEmail });
+    setNotes((prev) => [
+      {
+        id: Math.random().toString(),
+        criterion_id: criterionId,
+        kind: "file",
+        url: pub.publicUrl,
+        uploaded_at: new Date().toISOString(),
+        created_by: currentUserEmail ?? "Unknown",
+      },
+      ...prev,
+    ]);
+  }
+
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Top Nav */}
-      <header className="sticky top-0 z-10 bg-white/90 backdrop-blur border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-xl bg-sky-600 grid place-items-center text-white font-semibold">O</div>
-            <div className="flex items-center gap-2">
-              <span className="font-semibold tracking-tight">OR‑360</span>
-              <span className="text-xs text-slate-500">local</span>
+    <div className="mx-auto max-w-6xl p-6 space-y-8">
+      {/* Header + Project Summary */}
+      <header className="mb-6 flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">OR-360</h1>
+            <p className="text-slate-600">Operational Readiness — enriched checklist</p>
+          </div>
+          <select
+            className="rounded-xl border px-3 py-2"
+            value={activeProjectId ?? ""}
+            onChange={(e) => setActiveProjectId(e.target.value)}
+          >
+            {projects?.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Overall progress */}
+        {stats.total > 0 && (
+          <div className="rounded-xl border bg-white p-4 shadow">
+            <div className="mb-2 flex justify-between text-sm">
+              <span>
+                {stats.done}/{stats.total} Complete
+              </span>
+              <span>{Math.round((stats.done / stats.total) * 100)}%</span>
+            </div>
+            <div className="h-3 w-full rounded-full bg-slate-200">
+              <div
+                className="h-3 rounded-full bg-green-500"
+                style={{ width: `${(stats.done / stats.total) * 100}%` }}
+              />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-4 text-xs text-slate-600">
+              <span className="text-green-600">✅ Done: {stats.done}</span>
+              <span className="text-amber-600">🔶 In progress: {stats.inprog}</span>
+              <span className="text-slate-600">⚪ Not started: {stats.notStarted}</span>
+              <span className="text-red-600">⛔ Delayed: {stats.delayed}</span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {userEmail ? (
-              <>
-                <span className="hidden sm:block text-sm text-slate-600">{userEmail}</span>
-                <button
-                  onClick={signOut}
-                  className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-                >
-                  Sign out
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={signIn}
-                className="inline-flex items-center rounded-lg bg-sky-600 text-white px-3 py-1.5 text-sm hover:bg-sky-700"
-              >
-                Sign in
-              </button>
-            )}
-          </div>
-        </div>
+        )}
       </header>
 
-      <main className="max-w-7xl mx-auto p-6 md:p-8 space-y-6">
-        {/* Projects */}
-        <section className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Projects</h2>
-            {activeProject && (
-              <span
-                className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${
-                  statusChip[activeProject.status || "not_started"]
-                }`}
-              >
-                {activeProject.status || "not_started"}
-              </span>
-            )}
-          </div>
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className="w-72 rounded-xl border px-3 py-2"
+          placeholder="Search…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        {(["All", "S", "M", "L"] as const).map((s) => (
+          <button
+            key={s}
+            className={`rounded-full border px-3 py-1 text-sm ${
+              sizeFilter === s ? "bg-slate-100" : ""
+            }`}
+            onClick={() => setSizeFilter(s)}
+          >
+            Size: {s}
+          </button>
+        ))}
+      </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            {projects.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => setActiveProject(p)}
-                className={`inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-1.5 hover:bg-slate-50 transition ${
-                  activeProject?.id === p.id ? "bg-sky-50 ring-2 ring-sky-200" : ""
-                }`}
-              >
-                {p.name}
-              </button>
-            ))}
-            {!projects.length && (
-              <div className="text-sm text-slate-500">No projects visible (check RLS membership or sign in).</div>
-            )}
-          </div>
-        </section>
+      {loading && <EmptyState message="Loading criteria…" />}
+      {!loading && categories.length === 0 && <EmptyState message="No criteria match." />}
 
-        {/* Criteria & Evidence */}
-        {activeProject && (
-          <section className="bg-white border border-slate-200 rounded-2xl shadow-sm p-6 space-y-5">
-            <div className="flex items-center justify-between gap-6 flex-wrap">
-              <h3 className="text-lg font-semibold">Criteria — {activeProject.name}</h3>
-              {/* Readiness */}
-              <div className="w-full sm:w-96">
-                <div className="flex items-center justify-between text-xs text-slate-600 mb-1">
-                  <span>Readiness</span>
-                  <span>{readiness}%</span>
+      {/* Categories */}
+      <div className="space-y-10">
+        {categories.map((cat) => {
+          const items = grouped[cat];
+          const doneCount = items.filter((i) => i.status === "done").length;
+          return (
+            <section key={cat}>
+              <div className="sticky top-0 z-10 mb-3 bg-white/90 py-2 backdrop-blur">
+                <div className="mb-1 flex items-center justify-between">
+                  <h2 className="text-xl font-bold">{cat}</h2>
+                  <span className="text-sm text-slate-600">
+                    {doneCount}/{items.length} done
+                  </span>
                 </div>
-                <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                <div className="h-2 w-full rounded-full bg-slate-200">
                   <div
-                    style={{ width: `${readiness}%` }}
-                    className="h-full bg-sky-500 transition-[width] duration-200"
+                    className="h-2 rounded-full bg-green-500"
+                    style={{ width: `${(doneCount / items.length) * 100}%` }}
                   />
                 </div>
               </div>
-            </div>
-
-            <div className="grid gap-4">
-              {criteria.map((c) => {
-                const ev = evidence
-                  .filter((e) => e.criterion_id === c.id)
-                  .sort(
-                    (a, b) =>
-                      new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime()
-                  );
-
-                return (
-                  <div key={c.id} className="p-4 rounded-xl border border-slate-200 bg-white">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="font-medium">{c.title}</div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          {ev.length ? `${ev.length} evidence item${ev.length > 1 ? "s" : ""}` : "No evidence yet"}
-                        </div>
-                      </div>
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${statusChip[c.status]}`}>
-                        {c.status}
-                      </span>
-                    </div>
-
-                    {/* Status buttons */}
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {["not_started", "in_progress", "done"].map((s) => (
-                        <button
-                          key={s}
-                          onClick={() => setStatus(c.id, s)}
-                          className={`inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm hover:bg-slate-50 transition ${
-                            c.status === s ? "bg-sky-50 ring-2 ring-sky-200" : ""
-                          }`}
-                        >
-                          {s.replace("_", " ")}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Add note */}
-                    <div className="mt-3 flex items-center gap-2">
-                      {addingNoteFor === c.id ? (
-                        <>
-                          <input
-                            autoFocus
-                            value={noteText}
-                            onChange={(e) => setNoteText(e.target.value)}
-                            placeholder="Add evidence note…"
-                            className="flex-1 rounded-xl border border-slate-300 px-3 py-2 outline-none focus:ring-2 focus:ring-sky-200"
-                          />
-                          <button
-                            onClick={() => addNote(c.id)}
-                            className="inline-flex items-center rounded-lg bg-sky-600 text-white px-3 py-2 text-sm hover:bg-sky-700"
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={() => {
-                              setAddingNoteFor(null);
-                              setNoteText("");
-                            }}
-                            className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          onClick={() => setAddingNoteFor(c.id)}
-                          className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-                        >
-                          + Add note
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Evidence list */}
-{/* Evidence toggle */}
-{!!ev.length && (
-  <div className="mt-3">
-    <button
-      onClick={() =>
-        setOpenEvidence((prev) => ({
-          ...prev,
-          [c.id]: !prev[c.id],
-        }))
-      }
-      className="flex items-center gap-1 text-sm text-sky-700 hover:underline"
-    >
-      {openEvidence[c.id] ? (
-        <ChevronDown size={16} />
-      ) : (
-        <ChevronRight size={16} />
-      )}
-      {openEvidence[c.id] ? "Hide evidence" : `Show evidence (${ev.length})`}
-    </button>
-
-    {openEvidence[c.id] && (
-      <div className="mt-2 space-y-1 pl-5 border-l border-slate-200">
-        {ev.map((row) => (
-          <div key={row.id} className="text-sm text-slate-700">
-            {row.kind === "note" && <>📝 {row.note}</>}
-            {row.kind === "link" && (
-              <>
-                🔗{" "}
-                <a
-                  className="text-sky-700 hover:underline"
-                  href={row.url!}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {row.url}
-                </a>
-              </>
-            )}
-            <span className="ml-2 text-xs text-slate-500">
-              {new Date(row.uploaded_at).toLocaleString()}
-            </span>
-          </div>
-        ))}
+              <div className="grid gap-3">
+                {items.map((c) => (
+                  <CriterionCard
+                    key={c.id}
+                    c={c}
+                    notes={notes.filter((ev) => ev.criterion_id === c.id)}
+                    onUpdateStatus={handleUpdateStatus}
+                    onAddNote={addNote}
+                    onAddLink={addLink}
+                    onUploadFile={uploadFile}
+                  />
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </div>
-    )}
-  </div>
-)}
+    </div>
+  );
+}
 
-                  </div>
-                );
-              })}
+// ==========================================================
+// Criterion Card
+// ==========================================================
+function CriterionCard({
+  c,
+  notes,
+  onUpdateStatus,
+  onAddNote,
+  onAddLink,
+  onUploadFile,
+}: {
+  c: Criterion;
+  notes: Note[];
+  onUpdateStatus: (id: string, status: Criterion["status"]) => void;
+  onAddNote: (id: string, text: string) => void;
+  onAddLink: (id: string, url: string) => void;
+  onUploadFile: (id: string, f: File) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [noteText, setNoteText] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [tab, setTab] = useState<"notes" | "evidence">("notes");
+
+  const noteItems = notes
+    .filter((n) => n.kind === "note")
+    .sort((a, b) => +new Date(b.uploaded_at) - +new Date(a.uploaded_at));
+  const evidenceItems = notes
+    .filter((n) => n.kind !== "note")
+    .sort((a, b) => +new Date(b.uploaded_at) - +new Date(a.uploaded_at));
+
+  return (
+    <div className="rounded-2xl border bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <button onClick={() => setOpen((o) => !o)} className="mr-2 text-slate-600">
+            {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </button>
+          <span className="font-medium">{c.title}</span>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            {priorityBadge(c.meta?.priority)}
+            {c.meta?.pillar && (
+              <span className="rounded-full border px-2 py-0.5">Pillar: {c.meta.pillar}</span>
+            )}
+            {c.meta?.assuranceType && (
+              <span className="rounded-full border px-2 py-0.5">Assurance: {c.meta.assuranceType}</span>
+            )}
+            {c.meta?.size && <span className="rounded-full border px-2 py-0.5">Size: {c.meta.size}</span>}
+          </div>
+        </div>
+        <div className="shrink-0 space-x-1">
+          <button
+            className={`rounded-md border px-2 py-1 text-sm ${c.status === "not_started" ? "bg-white" : ""}`}
+            onClick={() => onUpdateStatus(c.id, "not_started")}
+          >
+            Not started
+          </button>
+          <button
+            className={`rounded-md border px-2 py-1 text-sm ${c.status === "in_progress" ? "bg-amber-100" : ""}`}
+            onClick={() => onUpdateStatus(c.id, "in_progress")}
+          >
+            In progress
+          </button>
+          <button
+            className={`rounded-md border px-2 py-1 text-sm ${c.status === "done" ? "bg-green-100" : ""}`}
+            onClick={() => onUpdateStatus(c.id, "done")}
+          >
+            Done
+          </button>
+          <button
+            className={`rounded-md border px-2 py-1 text-sm ${c.status === "delayed" ? "bg-red-200" : ""}`}
+            onClick={() => onUpdateStatus(c.id, "delayed")}
+          >
+            Delayed
+          </button>
+        </div>
+      </div>
+
+      {open && (
+        <div className="mt-3 space-y-4 border-t pt-3">
+          {c.meta?.description && (
+            <p className="text-sm text-slate-700">{c.meta.description}</p>
+          )}
+
+          {/* Tabs */}
+          <div className="flex gap-2 border-b pb-2">
+            <button
+              className={`rounded-t-md px-3 py-1 text-sm ${
+                tab === "notes" ? "bg-slate-100 font-semibold" : "text-slate-600"
+              }`}
+              onClick={() => setTab("notes")}
+            >
+              Notes ({noteItems.length})
+            </button>
+            <button
+              className={`rounded-t-md px-3 py-1 text-sm ${
+                tab === "evidence" ? "bg-slate-100 font-semibold" : "text-slate-600"
+              }`}
+              onClick={() => setTab("evidence")}
+            >
+              Evidence ({evidenceItems.length})
+            </button>
+          </div>
+
+          {tab === "notes" && (
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 rounded-md border px-2 py-1 text-sm"
+                  placeholder="Write a note…"
+                  value={noteText}
+                  onChange={(e) => setNoteText(e.target.value)}
+                />
+                <button
+                  onClick={() => {
+                    if (noteText.trim()) {
+                      onAddNote(c.id, noteText.trim());
+                      setNoteText("");
+                    }
+                  }}
+                  className="rounded-md border bg-white px-3 py-1 text-sm hover:bg-slate-100"
+                >
+                  Add
+                </button>
+              </div>
+              {noteItems.length > 0 ? (
+                <ul className="space-y-1">
+                  {noteItems.map((n) => (
+                    <li key={n.id} className="flex flex-col">
+                      <div className="flex items-center gap-2 text-slate-800">
+                        <StickyNote size={14} /> {n.note}
+                      </div>
+                      <div className="ml-6 text-xs text-slate-600">
+                        {new Date(n.uploaded_at).toLocaleString()} — {n.created_by ?? "Unknown"}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-xs text-slate-600">No notes yet.</div>
+              )}
             </div>
-          </section>
-        )}
-      </main>
+          )}
+
+          {tab === "evidence" && (
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
+                <input
+                  className="flex-1 min-w-[240px] rounded-md border px-2 py-1 text-sm"
+                  placeholder="Paste a URL…"
+                  value={linkUrl}
+                  onChange={(e) => setLinkUrl(e.target.value)}
+                />
+                <button
+                  onClick={() => {
+                    if (linkUrl.trim()) {
+                      onAddLink(c.id, linkUrl.trim());
+                      setLinkUrl("");
+                    }
+                  }}
+                  className="rounded-md border bg-white px-3 py-1 text-sm hover:bg-slate-100"
+                >
+                Add URL
+                </button>
+                <label className="flex cursor-pointer items-center gap-2 rounded-md border bg-white px-3 py-1 text-sm hover:bg-slate-100">
+                  <Paperclip size={14} /> Upload file
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) onUploadFile(c.id, f);
+                    }}
+                  />
+                </label>
+              </div>
+
+              {evidenceItems.length > 0 ? (
+                <ul className="space-y-1">
+                  {evidenceItems.map((ev) => (
+                    <li key={ev.id} className="flex flex-col">
+                      <div className="flex items-center gap-2 text-slate-800">
+                        {ev.kind === "link" && <LinkIcon size={14} />}
+                        {ev.kind === "file" && <Paperclip size={14} />}
+                        {ev.url && (
+                          <a
+                            href={ev.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="break-all text-blue-600 underline"
+                          >
+                            {ev.url}
+                          </a>
+                        )}
+                      </div>
+                      <div className="ml-6 text-xs text-slate-600">
+                        {new Date(ev.uploaded_at).toLocaleString()} — {ev.created_by ?? "Unknown"}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="text-xs text-slate-600">No evidence yet.</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
