@@ -321,7 +321,7 @@ export default function App() {
       <header className="mb-6 flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">OR-360</h1>
+            <h1 className="text-3xl font-bold">OR-360 V1.0</h1>
             <p className="text-slate-600">Operational Readiness — enriched checklist</p>
           </div>
           <select
