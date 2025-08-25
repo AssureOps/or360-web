@@ -133,7 +133,6 @@ export default function App() {
         .from("criteria")
         .select("id,project_id,title,status,category,meta,owner_email,due_date,caveat_reason,created_at,updated_at")
         .eq("project_id", activeProjectId)
-        .order("category", { ascending: true })
         .order("title", { ascending: true });
       if (error) { setErr(error.message); setLoading(false); return; }
       setCriteria(crits as Criterion[] | null);
