@@ -174,7 +174,9 @@ export default function App() {
     return acc;
   }, [filtered]);
 
-  const categories = useMemo(() => Object.keys(grouped), [grouped]);
+ // const categories = useMemo(() => Object.keys(grouped), [grouped]);
+  const categories = useMemo(() => Object.keys(grouped).sort(), [grouped]);
+
 
   // overall stats
   const stats = useMemo(() => {
