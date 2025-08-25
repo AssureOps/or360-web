@@ -315,7 +315,15 @@ export default function App() {
     } catch {}
   }
 
+
+const supaHost = (() => {
+    try { return new URL(import.meta.env.VITE_SUPABASE_URL!).host; }
+    catch { return "invalid-url"; }
+  })();
+
   return (
+
+  
     <div className="mx-auto max-w-6xl p-6 space-y-8">
       {/* Header + Project Summary */}
       <header className="mb-6 flex flex-col gap-4">
@@ -324,6 +332,9 @@ export default function App() {
             <h1 className="text-3xl font-bold">OR-360 V1.0</h1>
             <p className="text-slate-600">Operational Readiness — enriched checklist</p>
           </div>
+		    <div className="fixed bottom-3 right-3 rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs text-slate-600 backdrop-blur">
+        Supabase: {supaHost}
+      </div>
           <select
             className="rounded-xl border border-slate-200 px-3 py-2"
             value={activeProjectId ?? ""}
