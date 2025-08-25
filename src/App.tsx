@@ -80,6 +80,29 @@ function hostPath(u?: string | null) {
 // App
 // ==========================================================
 export default function App() {
+useEffect(() => {
+  // expose client for console use
+  (window as any).__sb = supabase;
+
+  // quick sanity queries
+  (async () => {
+    const { data: projects, error: pErr } = await supabase
+      .from("projects")
+      .select("id,name,status,created_at")
+      .order("created_at", { ascending: false })
+      .limit(5);
+
+    console.info("DEV env URL:", import.meta.env.VITE_SUPABASE_URL);
+    console.info("Projects from this DB:", { error: pErr, count: projects?.length, rows: projects });
+
+    // optional: check criteria shape (will fail if that table/columns aren't in this DB)
+    const { data: crit, error: cErr } = await supabase
+      .from("criteria")
+      .select("id,title,category,status")
+      .limit(3);
+    console.info("Criteria probe:", { error: cErr, rows: crit });
+  })();
+}, []);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [criteria, setCriteria] = useState<Criterion[] | null>(null);
@@ -176,6 +199,7 @@ export default function App() {
 
  // const categories = useMemo(() => Object.keys(grouped), [grouped]);
   const categories = useMemo(() => Object.keys(grouped).sort(), [grouped]);
+  
 
 
   // overall stats
