@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { ChevronDown, ChevronRight, Paperclip, Link as LinkIcon, StickyNote, Trash2 } from "lucide-react";
 import { generateCertificate } from "./lib/certificate";
+import { Link } from "react-router-dom";
+
 
 /** Types **/
 export type Criterion = {
@@ -315,19 +317,21 @@ export default function App() {
   {/* Top row: Logo + Title + (on larger screens) project selector */}
    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     {/* Logo + Title */}
-    <div className="flex min-w-0 items-center gap-3">
-      <img
-        src="/assureops-logo.png" // or your current path
-        alt="AssureOps logo"
-        className="h-10 w-auto sm:h-12 md:h-14 lg:h-16"
-      />
-      <div className="min-w-0">
-
-        <p className="text-sm text-slate-600 sm:text-base md:text-lg lg:text-xl">
-          OR 360 - Operational Readiness — enriched checklist
-        </p>
-      </div>
-    </div>
+<div className="flex min-w-0 items-center gap-3">
+  <img
+    src="/assureops-logo.png"
+    alt="AssureOps logo"
+    className="h-10 w-auto sm:h-12 md:h-14"
+  />
+  <div className="flex flex-col min-w-0">
+    <h1 className="text-xl font-bold sm:text-2xl md:text-3xl lg:text-4xl">
+      OR-360
+    </h1>
+    <p className="text-xs text-slate-600 sm:text-sm md:text-base lg:text-lg">
+      Operational Readiness — enriched checklist
+    </p>
+  </div>
+</div>
 
     {/* Project selector (inline on ≥sm) */}
     <div className="hidden sm:block">
@@ -412,6 +416,15 @@ export default function App() {
         Generate Certificate
       </button>
     </div>
+	
+	<div className="flex gap-2 mt-2">
+  <Link
+    to="/dashboard"
+    className="rounded-md border border-slate-200 bg-white px-3 py-1 text-sm hover:bg-slate-100"
+  >
+    View Dashboard
+  </Link>
+</div>
   </div>
         )}
       </header>
