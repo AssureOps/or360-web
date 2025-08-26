@@ -312,23 +312,26 @@ export default function App() {
     <div className="mx-auto max-w-6xl p-6 space-y-8">
       {/* Header */}
       <header className="mb-6 flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold">OR-360</h1>
-            <p className="text-slate-600">Operational Readiness — enriched checklist</p>
-          </div>
-          <select
-            className="rounded-xl border border-slate-200 px-3 py-2"
-            value={activeProjectId ?? ""}
-            onChange={(e) => setActiveProjectId(e.target.value)}
-          >
-            {projects?.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
+          <div className="flex items-center justify-between">
+    <div className="flex items-center gap-3">
+   <img src="/assureops-logo.png" alt="AssureOps logo" className="h-50 w-auto" />
+      <div>
+        
+        <p className="text-slate-600">OR-360 Operational Readiness</p>
+      </div>
+    </div>
+    <select
+      className="rounded-xl border border-slate-200 px-3 py-2"
+      value={activeProjectId ?? ""}
+      onChange={(e) => setActiveProjectId(e.target.value)}
+    >
+      {projects?.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+        </option>
+      ))}
+    </select>
+  </div>
 
         {/* Project quick switcher */}
         <div className="mt-2 flex items-center gap-3 text-sm text-slate-600">
