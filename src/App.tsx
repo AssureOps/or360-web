@@ -467,13 +467,76 @@ function CriterionCard({
   const [linkUrl, setLinkUrl] = useState("");
   const [tab, setTab] = useState<"activity" | "evidence">("activity");
 
-  const noteItems = [...notes]
-    .filter((n) => n.kind === "note")
-    .sort((a, b) => +new Date(b.uploaded_at) - +new Date(a.uploaded_at));
+  // Pagination state
+  const pageSize = 5; // 👈 adjust page size here
+  const [notePage, setNotePage] = useState(0);
+  const [evPage, setEvPage] = useState(0);
+// Owner + Due Date (controlled, with audit and Save/Cancel)
+const [owner, setOwner] = useState(c.owner_email ?? "");
+const [prevOwner, setPrevOwner] = useState(c.owner_email ?? "");
+const [ownerDirty, setOwnerDirty] = useState(false);
 
-  const evidenceItems = [...notes]
-    .filter((n) => n.kind !== "note")
-    .sort((a, b) => +new Date(b.uploaded_at) - +new Date(a.uploaded_at));
+const [dueDate, setDueDate] = useState(c.due_date ?? "");
+const [prevDueDate, setPrevDueDate] = useState(c.due_date ?? "");
+const [dueDirty, setDueDirty] = useState(false);
+
+useEffect(() => {
+  setOwner(c.owner_email ?? "");
+  setPrevOwner(c.owner_email ?? "");
+  setOwnerDirty(false);
+
+  setDueDate(c.due_date ?? "");
+  setPrevDueDate(c.due_date ?? "");
+  setDueDirty(false);
+}, [c.id, c.owner_email, c.due_date]);
+
+  // Sorted derived lists for this criterion
+  const noteItems = useMemo(
+    () =>
+      [...notes]
+        .filter((n) => n.kind === "note")
+        .sort((a, b) => +new Date(b.uploaded_at) - +new Date(a.uploaded_at)),
+    [notes]
+  );
+
+  const evidenceItems = useMemo(
+    () =>
+      [...notes]
+        .filter((n) => n.kind !== "note")
+        .sort((a, b) => +new Date(b.uploaded_at) - +new Date(a.uploaded_at)),
+    [notes]
+  );
+
+  // Paged slices
+  const noteTotalPages = Math.max(1, Math.ceil(noteItems.length / pageSize));
+  const evTotalPages = Math.max(1, Math.ceil(evidenceItems.length / pageSize));
+
+  const pagedNotes = noteItems.slice(notePage * pageSize, notePage * pageSize + pageSize);
+  const pagedEvidence = evidenceItems.slice(evPage * pageSize, evPage * pageSize + pageSize);
+
+  // Keep page indices in range if list sizes change
+  useEffect(() => {
+    if (notePage > noteTotalPages - 1) setNotePage(Math.max(0, noteTotalPages - 1));
+  }, [notePage, noteTotalPages]);
+  useEffect(() => {
+    if (evPage > evTotalPages - 1) setEvPage(Math.max(0, evTotalPages - 1));
+  }, [evPage, evTotalPages]);
+
+  // After adding new content, jump to first page (newest at top)
+  const onAddNoteLocal = (text: string) => {
+    onAddNote(c.id, text);
+    setNotePage(0);
+  };
+  const onAddLinkLocal = (url: string) => {
+    onAddLink(c.id, url);
+    setEvPage(0);
+    setNotePage(0); // a cover note is also added
+  };
+  const onUploadFileLocal = (f: File) => {
+    onUploadFile(c.id, f);
+    setEvPage(0);
+    setNotePage(0); // a cover note is also added
+  };
 
   const lastAction = [...notes].sort((a, b) => +new Date(b.uploaded_at) - +new Date(a.uploaded_at))[0];
 
@@ -524,7 +587,7 @@ function CriterionCard({
                 </div>
               </div>
 
-              {/* Meta badges (only Caveat badge now) */}
+              {/* Caveat badge */}
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
                 {c.status === "caveat" && c.caveat_reason && (
                   <span className="rounded-full border border-slate-200 bg-purple-50 px-2 py-0.5 text-purple-700">
@@ -533,10 +596,8 @@ function CriterionCard({
                 )}
               </div>
 
-              {/* Description above expanded area */}
-              {c.meta?.description && (
-                <p className="mt-2 text-sm text-slate-700">{c.meta.description}</p>
-              )}
+              {/* Description */}
+              {c.meta?.description && <p className="mt-2 text-sm text-slate-700">{c.meta.description}</p>}
             </div>
           </div>
         </div>
@@ -545,30 +606,89 @@ function CriterionCard({
       {/* Expanded content */}
       {open && (
         <div className="mt-3 space-y-4 border-t border-slate-200 pt-3">
-          {/* Ownership & Target — ONLY when expanded */}
-          <div className="rounded-md border border-slate-200 bg-slate-50 p-2">
-            <div className="mb-1 text-xs font-semibold text-slate-700">Ownership &amp; Target</div>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-              <input
-                className="w-52 rounded-md border border-slate-200 px-2 py-1"
-                placeholder="Owner email"
-                defaultValue={c.owner_email ?? ""}
-                onBlur={async (e) => {
-                  const v = e.target.value.trim() || null;
-                  await supabase.from("criteria").update({ owner_email: v }).eq("id", c.id);
-                }}
-              />
-              <input
-                type="date"
-                className="rounded-md border border-slate-200 px-2 py-1"
-                defaultValue={c.due_date ?? ""}
-                onChange={async (e) => {
-                  const v = e.target.value || null;
-                  await supabase.from("criteria").update({ due_date: v }).eq("id", c.id);
-                }}
-              />
-            </div>
-          </div>
+         {/* Ownership & Target — ONLY when expanded */}
+<div className="rounded-md border border-slate-200 bg-slate-50 p-2">
+  <div className="mb-1 text-xs font-semibold text-slate-700">Ownership &amp; Target</div>
+
+  {/* Owner */}
+  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+    <input
+      type="email"
+      value={owner}
+      placeholder="Owner email"
+      onChange={(e) => { setOwner(e.target.value.trim()); setOwnerDirty(true); }}
+      className="w-52 rounded-md border border-slate-200 px-2 py-1"
+    />
+    {ownerDirty && (
+      <div className="flex items-center gap-1">
+        <button
+          className="rounded border border-slate-200 bg-white px-2 py-0.5 hover:bg-slate-100"
+          onClick={async () => {
+            const v = owner || null;
+            const { error } = await supabase.from("criteria").update({ owner_email: v }).eq("id", c.id);
+            if (!error) {
+              const msg = v
+                ? (prevOwner ? `Owner changed from ${prevOwner} to ${v}` : `Owner set to ${v}`)
+                : (prevOwner ? `Owner cleared (was ${prevOwner})` : `Owner cleared`);
+              onAddNote(c.id, msg);
+              setPrevOwner(owner);
+              setOwnerDirty(false);
+            }
+          }}
+        >
+          Save
+        </button>
+        <button
+          className="rounded border border-slate-200 bg-white px-2 py-0.5 hover:bg-slate-100"
+          onClick={() => { setOwner(prevOwner); setOwnerDirty(false); }}
+        >
+          Cancel
+        </button>
+      </div>
+    )}
+  </div>
+
+  {/* Due date */}
+  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+    <input
+      type="date"
+      value={dueDate}
+      onChange={(e) => { setDueDate(e.target.value || ""); setDueDirty(true); }}
+      className={`rounded-md border px-2 py-1 ${
+        dueDate && new Date(dueDate) < new Date()
+          ? "border-red-300 text-red-600 bg-red-50"
+          : "border-slate-200"
+      }`}
+    />
+    {dueDirty && (
+      <div className="flex items-center gap-1">
+        <button
+          className="rounded border border-slate-200 bg-white px-2 py-0.5 hover:bg-slate-100"
+          onClick={async () => {
+            const v = dueDate || null;
+            const { error } = await supabase.from("criteria").update({ due_date: v }).eq("id", c.id);
+            if (!error) {
+              const msg = v
+                ? (prevDueDate ? `Due date changed from ${prevDueDate} to ${v}` : `Due date set to ${v}`)
+                : (prevDueDate ? `Due date cleared (was ${prevDueDate})` : `Due date cleared`);
+              onAddNote(c.id, msg);
+              setPrevDueDate(dueDate);
+              setDueDirty(false);
+            }
+          }}
+        >
+          Save
+        </button>
+        <button
+          className="rounded border border-slate-200 bg-white px-2 py-0.5 hover:bg-slate-100"
+          onClick={() => { setDueDate(prevDueDate); setDueDirty(false); }}
+        >
+          Cancel
+        </button>
+      </div>
+    )}
+  </div>
+</div>
 
           {/* Tabs */}
           <div className="flex gap-2 border-b border-slate-200 pb-2">
@@ -586,6 +706,7 @@ function CriterionCard({
             </button>
           </div>
 
+          {/* Activity tab */}
           {tab === "activity" && (
             <div className="space-y-2">
               <div className="flex gap-2">
@@ -598,7 +719,7 @@ function CriterionCard({
                 <button
                   onClick={() => {
                     if (noteText.trim()) {
-                      onAddNote(c.id, noteText.trim());
+                      onAddNoteLocal(noteText.trim());
                       setNoteText("");
                     }
                   }}
@@ -607,26 +728,52 @@ function CriterionCard({
                   Add
                 </button>
               </div>
-              {noteItems.length > 0 ? (
-                <ul className="space-y-1">
-                  {noteItems.map((n) => (
-                    <li key={n.id} className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2 text-slate-800">
-                        <StickyNote size={14} />
-                        <span className="flex-1">{n.note}</span>
-                      </div>
-                      <div className="ml-6 text-xs text-slate-600">
-                        {new Date(n.uploaded_at).toLocaleString()} — {n.created_by ?? "Unknown"}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+
+              {pagedNotes.length > 0 ? (
+                <>
+                  <ul className="space-y-1">
+                    {pagedNotes.map((n) => (
+                      <li key={n.id} className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2 text-slate-800">
+                          <StickyNote size={14} />
+                          <span className="flex-1">{n.note}</span>
+                        </div>
+                        <div className="ml-6 text-xs text-slate-600">
+                          {new Date(n.uploaded_at).toLocaleString()} — {n.created_by ?? "Unknown"}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                  {/* Pager */}
+                  {noteItems.length > pageSize && (
+                    <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
+                      <button
+                        onClick={() => setNotePage((p) => Math.max(0, p - 1))}
+                        disabled={notePage === 0}
+                        className="rounded border border-slate-200 px-2 py-1 disabled:opacity-50"
+                      >
+                        Previous
+                      </button>
+                      <span>
+                        Page {notePage + 1} of {noteTotalPages}
+                      </span>
+                      <button
+                        onClick={() => setNotePage((p) => (p + 1 < noteTotalPages ? p + 1 : p))}
+                        disabled={notePage + 1 >= noteTotalPages}
+                        className="rounded border border-slate-200 px-2 py-1 disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="text-xs text-slate-600">No activity yet.</div>
               )}
             </div>
           )}
 
+          {/* Evidence tab */}
           {tab === "evidence" && (
             <div className="space-y-2">
               <div className="flex flex-wrap gap-2">
@@ -639,7 +786,7 @@ function CriterionCard({
                 <button
                   onClick={() => {
                     if (linkUrl.trim()) {
-                      onAddLink(c.id, linkUrl.trim());
+                      onAddLinkLocal(linkUrl.trim());
                       setLinkUrl("");
                     }
                   }}
@@ -654,48 +801,73 @@ function CriterionCard({
                     className="hidden"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
-                      if (f) onUploadFile(c.id, f);
+                      if (f) onUploadFileLocal(f);
                     }}
                   />
                 </label>
               </div>
 
-              {evidenceItems.length > 0 ? (
-                <ul className="space-y-1">
-                  {evidenceItems.map((ev) => {
-                    const label = ev.kind === "file" ? fileNameFromUrl(ev.url) : hostPath(ev.url);
-                    return (
-                      <li key={ev.id} className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2 text-slate-800">
-                          {ev.kind === "link" && <LinkIcon size={14} />}
-                          {ev.kind === "file" && <Paperclip size={14} />}
-                          {ev.url ? (
-                            <a
-                              href={ev.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={ev.url}
-                              className="max-w-[70%] truncate text-blue-600 underline"
+              {pagedEvidence.length > 0 ? (
+                <>
+                  <ul className="space-y-1">
+                    {pagedEvidence.map((ev) => {
+                      const label = ev.kind === "file" ? fileNameFromUrl(ev.url) : hostPath(ev.url);
+                      return (
+                        <li key={ev.id} className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2 text-slate-800">
+                            {ev.kind === "link" && <LinkIcon size={14} />}
+                            {ev.kind === "file" && <Paperclip size={14} />}
+                            {ev.url ? (
+                              <a
+                                href={ev.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={ev.url}
+                                className="max-w-[70%] truncate text-blue-600 underline"
+                              >
+                                {label}
+                              </a>
+                            ) : (
+                              <span className="max-w-[70%] truncate">{label}</span>
+                            )}
+                            <button
+                              className="flex items-center gap-1 text-xs text-red-600 underline"
+                              onClick={() => onDeleteEvidence(ev)}
                             >
-                              {label}
-                            </a>
-                          ) : (
-                            <span className="max-w-[70%] truncate">{label}</span>
-                          )}
-                          <button
-                            className="text-xs underline text-red-600 flex items-center gap-1"
-                            onClick={() => onDeleteEvidence(ev)}
-                          >
-                            <Trash2 size={12}/>Remove
-                          </button>
-                        </div>
-                        <div className="ml-6 text-xs text-slate-600">
-                          {new Date(ev.uploaded_at).toLocaleString()} — {ev.created_by ?? "Unknown"}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
+                              <Trash2 size={12} />Remove
+                            </button>
+                          </div>
+                          <div className="ml-6 text-xs text-slate-600">
+                            {new Date(ev.uploaded_at).toLocaleString()} — {ev.created_by ?? "Unknown"}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+
+                  {/* Pager */}
+                  {evidenceItems.length > pageSize && (
+                    <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
+                      <button
+                        onClick={() => setEvPage((p) => Math.max(0, p - 1))}
+                        disabled={evPage === 0}
+                        className="rounded border border-slate-200 px-2 py-1 disabled:opacity-50"
+                      >
+                        Previous
+                      </button>
+                      <span>
+                        Page {evPage + 1} of {evTotalPages}
+                      </span>
+                      <button
+                        onClick={() => setEvPage((p) => (p + 1 < evTotalPages ? p + 1 : p))}
+                        disabled={evPage + 1 >= evTotalPages}
+                        className="rounded border border-slate-200 px-2 py-1 disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="text-xs text-slate-600">No evidence yet.</div>
               )}
@@ -723,33 +895,29 @@ function CriterionCard({
         </div>
       )}
 
-      {/* Last Action — full width at the bottom of the card */}
-{lastAction && (
-  <div className="mt-3 -mx-4 border-t border-slate-200 px-4 py-2">
-    <div className="flex items-center justify-between text-xs text-slate-700">
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="font-semibold">Last action:</span>
-        <span className="flex items-center gap-1">
-          {lastAction.kind === "note" && <>🗒️ <span>Note</span></>}
-          {lastAction.kind === "link" && <>🔗 <span>Link</span></>}
-          {lastAction.kind === "file" && <>📎 <span>File</span></>}
-        </span>
-        {/* Highlighted note text / url */}
-        <span
-          className="truncate rounded-md bg-slate-100 px-2 py-0.5"
-          title={lastAction.note ?? lastAction.url ?? ""}
-        >
-          {lastAction.kind === "note" ? (lastAction.note ?? "") : (lastAction.url ?? "")}
-        </span>
-      </div>
-      <div className="ml-4 shrink-0 text-[11px] text-slate-500">
-        {new Date(lastAction.uploaded_at).toLocaleString()} — {lastAction.created_by ?? "Unknown"}
-      </div>
-    </div>
-  </div>
-)}
-
-
+      {/* Last Action — single line at bottom */}
+      {lastAction && (
+        <div className="mt-3 -mx-4 border-t border-slate-200 px-4 py-2">
+          <div className="flex items-center justify-between text-xs text-slate-700">
+            <div className="min-w-0 flex items-center gap-2">
+              <span className="font-semibold">Last action:</span>
+              <span className="flex items-center gap-1">
+                {lastAction.kind === "note" && <>🗒️ <span>Note</span></>}
+                {lastAction.kind === "link" && <>🔗 <span>Link</span></>}
+                {lastAction.kind === "file" && <>📎 <span>File</span></>}
+              </span>
+              <span className="truncate rounded-md bg-slate-100 px-2 py-0.5" title={lastAction.note ?? lastAction.url ?? ""}>
+                {lastAction.kind === "note" ? (lastAction.note ?? "") : (lastAction.url ?? "")}
+              </span>
+            </div>
+            <div className="ml-4 shrink-0 text-[11px] text-slate-500">
+              {new Date(lastAction.uploaded_at).toLocaleString()} — {lastAction.created_by ?? "Unknown"}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+
