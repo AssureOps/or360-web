@@ -168,21 +168,7 @@ export default function Dashboard() {
       {/* Header */}
       <header className="mb-2 space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-  <img
-    src="/assureops-logo.png"
-    alt="AssureOps logo"
-    className="h-10 w-auto sm:h-12 md:h-14"
-  />
-  <div className="flex flex-col min-w-0">
-    <h1 className="text-xl font-bold sm:text-2xl md:text-3xl lg:text-4xl">
-      OR-360
-    </h1>
-    <p className="text-xs text-slate-600 sm:text-sm md:text-base lg:text-lg">
-      Operational Readiness — enriched checklist
-    </p>
-  </div>
-</div>
+         
           <div className="flex items-center gap-2">
             <select
               className="rounded-xl border border-slate-200 px-3 py-2"
