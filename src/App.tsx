@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { ChevronDown, ChevronRight, Paperclip, Link as LinkIcon, StickyNote, Trash2 } from "lucide-react";
 
-// --- Types ---
+/** Types **/
 export type Criterion = {
   id: string;
   project_id: string;
@@ -21,10 +21,10 @@ export type Note = {
   id: string;
   criterion_id: string;
   kind: "note" | "link" | "file";
-  note?: string;
-  url?: string;
+  note?: string | null;
+  url?: string | null;
   uploaded_at: string;
-  created_by?: string;
+  created_by?: string | null;
   updated_at?: string | null;
   meta?: any;
 };
@@ -36,7 +36,7 @@ export type Project = {
   created_at: string;
 };
 
-// --- UI helpers ---
+/** UI helpers **/
 const priorityBadge = (p?: string) => {
   if (!p) return null;
   const base = "text-xs rounded-full border border-slate-200 px-2 py-0.5";
@@ -50,7 +50,6 @@ function EmptyState({ message }: { message: string }) {
   return <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">{message}</div>;
 }
 
-// Label helpers for evidence display
 function fileNameFromUrl(u?: string | null) {
   if (!u) return "";
   try {
@@ -58,9 +57,8 @@ function fileNameFromUrl(u?: string | null) {
     const parts = url.pathname.split("/");
     return parts[parts.length - 1] || url.hostname;
   } catch {
-    // fallback if it's not a full URL (e.g. pasted text)
-    const parts = u.split("/");
-    return parts[parts.length - 1] || u;
+    const parts = (u ?? "").split("/");
+    return parts[parts.length - 1] || (u ?? "");
   }
 }
 
@@ -69,40 +67,19 @@ function hostPath(u?: string | null) {
   try {
     const url = new URL(u);
     const p = url.pathname.replace(/^\/+/, "");
-    const label = p ? `${url.hostname}/${p}` : url.hostname;
-    return label;
+    return p ? `${url.hostname}/${p}` : url.hostname;
   } catch {
-    return u;
+    return u ?? "";
   }
 }
 
-// ==========================================================
-// App
-// ==========================================================
+/** App **/
 export default function App() {
-useEffect(() => {
-  // expose client for console use
-  (window as any).__sb = supabase;
+  // Expose supabase in dev console to check which DB we’re hitting
+  useEffect(() => {
+    (window as any).__sb = supabase;
+  }, []);
 
-  // quick sanity queries
-  (async () => {
-    const { data: projects, error: pErr } = await supabase
-      .from("projects")
-      .select("id,name,status,created_at")
-      .order("created_at", { ascending: false })
-      .limit(5);
-
-    console.info("DEV env URL:", import.meta.env.VITE_SUPABASE_URL);
-    console.info("Projects from this DB:", { error: pErr, count: projects?.length, rows: projects });
-
-    // optional: check criteria shape (will fail if that table/columns aren't in this DB)
-    const { data: crit, error: cErr } = await supabase
-      .from("criteria")
-      .select("id,title,category,status")
-      .limit(3);
-    console.info("Criteria probe:", { error: cErr, rows: crit });
-  })();
-}, []);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [criteria, setCriteria] = useState<Criterion[] | null>(null);
@@ -111,13 +88,10 @@ useEffect(() => {
   const [err, setErr] = useState<string | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
-  // filters
   const [search, setSearch] = useState("");
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({}); // categories collapsed by default
 
-  // category collapse state (default collapsed)
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-
-  // Auto sign-in + load projects
+  // Auto sign-in (demo creds) + load projects
   useEffect(() => {
     (async () => {
       const { data: sess } = await supabase.auth.getSession();
@@ -146,7 +120,7 @@ useEffect(() => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load criteria + notes for active project
+  // Load criteria + evidence for active project
   useEffect(() => {
     if (!activeProjectId) return;
     setLoading(true);
@@ -156,6 +130,7 @@ useEffect(() => {
         .from("criteria")
         .select("id,project_id,title,status,category,meta,owner_email,due_date,caveat_reason,created_at,updated_at")
         .eq("project_id", activeProjectId)
+        // Avoid server ORDER BY category (cache quirks) — we sort client-side
         .order("title", { ascending: true });
       if (error) { setErr(error.message); setLoading(false); return; }
       setCriteria(crits as Criterion[] | null);
@@ -175,7 +150,7 @@ useEffect(() => {
     })();
   }, [activeProjectId]);
 
-  // Derived collections
+  // Derived
   const filtered = useMemo(() => {
     const list = criteria ?? [];
     const q = search.trim().toLowerCase();
@@ -197,12 +172,8 @@ useEffect(() => {
     return acc;
   }, [filtered]);
 
- // const categories = useMemo(() => Object.keys(grouped), [grouped]);
   const categories = useMemo(() => Object.keys(grouped).sort(), [grouped]);
-  
 
-
-  // overall stats
   const stats = useMemo(() => {
     const all = criteria ?? [];
     const total = all.length;
@@ -214,7 +185,7 @@ useEffect(() => {
     return { total, done, inprog, delayed, caveat, notStarted };
   }, [criteria]);
 
-  // Actions
+  /** Actions **/
   async function handleUpdateStatus(id: string, status: Criterion["status"]) {
     const snapshot = criteria;
     setCriteria(prev => prev?.map(c => c.id === id ? { ...c, status } : c) ?? prev);
@@ -268,7 +239,6 @@ useEffect(() => {
   async function addLink(criterionId: string, url: string) {
     const v = url.trim();
     if (!v) return;
-    // Insert the link evidence
     const { data: linkRow, error } = await supabase
       .from("evidence")
       .insert({ criterion_id: criterionId, kind: "link", url: v, created_by: currentUserEmail })
@@ -293,7 +263,6 @@ useEffect(() => {
     const { error } = await supabase.storage.from("evidence").upload(path, file);
     if (error) { alert("Upload failed: " + error.message); return; }
     const { data: pub } = supabase.storage.from("evidence").getPublicUrl(path);
-    // Insert the file evidence
     const { data: fileRow, error: insErr } = await supabase
       .from("evidence")
       .insert({ criterion_id: criterionId, kind: "file", url: pub.publicUrl, created_by: currentUserEmail, meta: { storage_path: path } })
@@ -312,8 +281,6 @@ useEffect(() => {
       if (noteRow) setNotes(prev => [ noteRow as Note, ...prev ]);
     } catch {}
   }
-
-
 
   async function deleteEvidence(entry: Note) {
     const storagePath = entry.meta?.storage_path as (string | undefined);
@@ -340,26 +307,15 @@ useEffect(() => {
     } catch {}
   }
 
-
-const supaHost = (() => {
-    try { return new URL(import.meta.env.VITE_SUPABASE_URL!).host; }
-    catch { return "invalid-url"; }
-  })();
-
   return (
-
-  
     <div className="mx-auto max-w-6xl p-6 space-y-8">
-      {/* Header + Project Summary */}
+      {/* Header */}
       <header className="mb-6 flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">OR-360 V1.0</h1>
+            <h1 className="text-3xl font-bold">OR-360</h1>
             <p className="text-slate-600">Operational Readiness — enriched checklist</p>
           </div>
-		    <div className="fixed bottom-3 right-3 rounded-full border border-slate-200 bg-white/80 px-3 py-1 text-xs text-slate-600 backdrop-blur">
-        Supabase: {supaHost}
-      </div>
           <select
             className="rounded-xl border border-slate-200 px-3 py-2"
             value={activeProjectId ?? ""}
@@ -373,7 +329,7 @@ const supaHost = (() => {
           </select>
         </div>
 
-        {/* Project debug/quick switcher */}
+        {/* Project quick switcher */}
         <div className="mt-2 flex items-center gap-3 text-sm text-slate-600">
           <span>Projects: {projects?.length ?? 0}</span>
           <div className="flex flex-wrap gap-2">
@@ -390,25 +346,17 @@ const supaHost = (() => {
           </div>
         </div>
 
-        {/* error banner */}
-        {err && (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-700">{err}</div>
-        )}
+        {err && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-700">{err}</div>}
 
         {/* Overall progress */}
         {stats.total > 0 && (
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-2 flex justify-between text-sm">
-              <span>
-                {stats.done}/{stats.total} Complete
-              </span>
+              <span>{stats.done}/{stats.total} Complete</span>
               <span>{Math.round((stats.done / stats.total) * 100)}%</span>
             </div>
             <div className="h-3 w-full rounded-full bg-slate-100">
-              <div
-                className="h-3 rounded-full bg-green-500"
-                style={{ width: `${(stats.done / stats.total) * 100}%` }}
-              />
+              <div className="h-3 rounded-full bg-green-500" style={{ width: `${(stats.done / stats.total) * 100}%` }} />
             </div>
             <div className="mt-2 flex flex-wrap gap-4 text-xs text-slate-600">
               <span className="text-green-600">✅ Done: {stats.done}</span>
@@ -469,10 +417,7 @@ const supaHost = (() => {
 
               {/* Progress bar */}
               <div className="mx-4 mb-3 mt-0 h-2 rounded-full bg-slate-100">
-                <div
-                  className="h-2 rounded-full bg-green-500 transition-all"
-                  style={{ width: `${(doneCount / items.length) * 100}%` }}
-                />
+                <div className="h-2 rounded-full bg-green-500 transition-all" style={{ width: `${(doneCount / items.length) * 100}%` }} />
               </div>
 
               {!isCollapsed && (
@@ -499,9 +444,7 @@ const supaHost = (() => {
   );
 }
 
-// ==========================================================
-// Criterion Card
-// ==========================================================
+/** Criterion Card **/
 function CriterionCard({
   c,
   notes,
@@ -524,13 +467,14 @@ function CriterionCard({
   const [linkUrl, setLinkUrl] = useState("");
   const [tab, setTab] = useState<"activity" | "evidence">("activity");
 
-  // Sorted derived lists for this criterion
   const noteItems = [...notes]
     .filter((n) => n.kind === "note")
     .sort((a, b) => +new Date(b.uploaded_at) - +new Date(a.uploaded_at));
+
   const evidenceItems = [...notes]
     .filter((n) => n.kind !== "note")
     .sort((a, b) => +new Date(b.uploaded_at) - +new Date(a.uploaded_at));
+
   const lastAction = [...notes].sort((a, b) => +new Date(b.uploaded_at) - +new Date(a.uploaded_at))[0];
 
   return (
@@ -580,7 +524,7 @@ function CriterionCard({
                 </div>
               </div>
 
-              {/* Meta badges line — only show Caveat badge now */}
+              {/* Meta badges (only Caveat badge now) */}
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
                 {c.status === "caveat" && c.caveat_reason && (
                   <span className="rounded-full border border-slate-200 bg-purple-50 px-2 py-0.5 text-purple-700">
@@ -589,70 +533,43 @@ function CriterionCard({
                 )}
               </div>
 
-              {/* Description above Ownership & Target */}
+              {/* Description above expanded area */}
               {c.meta?.description && (
                 <p className="mt-2 text-sm text-slate-700">{c.meta.description}</p>
-              )}
-
-              {/* Ownership & Target */}
-              <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2">
-                <div className="mb-1 text-xs font-semibold text-slate-700">Ownership &amp; Target</div>
-                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-                  <input
-                    className="w-52 rounded-md border border-slate-200 px-2 py-1"
-                    placeholder="Owner email"
-                    defaultValue={c.owner_email ?? ""}
-                    onBlur={async (e) => {
-                      const v = e.target.value.trim() || null;
-                      await supabase.from('criteria').update({ owner_email: v }).eq('id', c.id);
-                    }}
-                  />
-                  <input
-                    type="date"
-                    className="rounded-md border border-slate-200 px-2 py-1"
-                    defaultValue={c.due_date ?? ""}
-                    onChange={async (e) => {
-                      const v = e.target.value || null;
-                      await supabase.from('criteria').update({ due_date: v }).eq('id', c.id);
-                    }}
-                  />
-                </div>
-
-                {/* Last Action */}
-                {lastAction && (
-                  <div className="mt-2 rounded-md border border-slate-200 bg-indigo-50 p-2 text-xs text-slate-700">
-                    Last action: {lastAction.kind === "note" ? "🗒️ Note" : lastAction.kind === "link" ? "🔗 Link" : "📎 File"}
-                    {" — "}{lastAction.kind === "note" ? (lastAction.note ?? "") : (lastAction.url ?? "")}
-                    {" — "}{new Date(lastAction.uploaded_at).toLocaleString()} — {lastAction.created_by ?? "Unknown"}
-                  </div>
-                )}
-              </div>
-
-              {/* Caveat Reason (inline) */}
-              {c.status === "caveat" && (
-                <div className="mt-2 rounded-md border border-slate-200 bg-purple-50 p-2">
-                  <div className="mb-1 text-xs font-semibold text-purple-700">Caveat reason</div>
-                  <input
-                    className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm"
-                    placeholder="Enter caveat reason"
-                    defaultValue={c.caveat_reason ?? ""}
-                    onBlur={async (e) => {
-                      const v = e.target.value.trim() || null;
-                      await supabase.from("criteria").update({ caveat_reason: v }).eq("id", c.id);
-                    }}
-                  />
-                  {c.caveat_reason && (
-                    <div className="mt-1 text-xs text-purple-700">Current: {c.caveat_reason}</div>
-                  )}
-                </div>
               )}
             </div>
           </div>
         </div>
       </div>
 
+      {/* Expanded content */}
       {open && (
         <div className="mt-3 space-y-4 border-t border-slate-200 pt-3">
+          {/* Ownership & Target — ONLY when expanded */}
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-2">
+            <div className="mb-1 text-xs font-semibold text-slate-700">Ownership &amp; Target</div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              <input
+                className="w-52 rounded-md border border-slate-200 px-2 py-1"
+                placeholder="Owner email"
+                defaultValue={c.owner_email ?? ""}
+                onBlur={async (e) => {
+                  const v = e.target.value.trim() || null;
+                  await supabase.from("criteria").update({ owner_email: v }).eq("id", c.id);
+                }}
+              />
+              <input
+                type="date"
+                className="rounded-md border border-slate-200 px-2 py-1"
+                defaultValue={c.due_date ?? ""}
+                onChange={async (e) => {
+                  const v = e.target.value || null;
+                  await supabase.from("criteria").update({ due_date: v }).eq("id", c.id);
+                }}
+              />
+            </div>
+          </div>
+
           {/* Tabs */}
           <div className="flex gap-2 border-b border-slate-200 pb-2">
             <button
@@ -696,7 +613,6 @@ function CriterionCard({
                     <li key={n.id} className="flex flex-col gap-1">
                       <div className="flex items-center gap-2 text-slate-800">
                         <StickyNote size={14} />
-                        {/* read-only note text */}
                         <span className="flex-1">{n.note}</span>
                       </div>
                       <div className="ml-6 text-xs text-slate-600">
@@ -753,7 +669,7 @@ function CriterionCard({
                         <div className="flex items-center gap-2 text-slate-800">
                           {ev.kind === "link" && <LinkIcon size={14} />}
                           {ev.kind === "file" && <Paperclip size={14} />}
-                          {ev.url && (
+                          {ev.url ? (
                             <a
                               href={ev.url}
                               target="_blank"
@@ -763,8 +679,15 @@ function CriterionCard({
                             >
                               {label}
                             </a>
+                          ) : (
+                            <span className="max-w-[70%] truncate">{label}</span>
                           )}
-                          <button className="text-xs underline text-red-600 flex items-center gap-1" onClick={()=>onDeleteEvidence(ev)}><Trash2 size={12}/>Remove</button>
+                          <button
+                            className="text-xs underline text-red-600 flex items-center gap-1"
+                            onClick={() => onDeleteEvidence(ev)}
+                          >
+                            <Trash2 size={12}/>Remove
+                          </button>
                         </div>
                         <div className="ml-6 text-xs text-slate-600">
                           {new Date(ev.uploaded_at).toLocaleString()} — {ev.created_by ?? "Unknown"}
@@ -778,8 +701,55 @@ function CriterionCard({
               )}
             </div>
           )}
+
+          {/* Caveat Reason (inline when caveat) */}
+          {c.status === "caveat" && (
+            <div className="rounded-md border border-slate-200 bg-purple-50 p-2">
+              <div className="mb-1 text-xs font-semibold text-purple-700">Caveat reason</div>
+              <input
+                className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm"
+                placeholder="Enter caveat reason"
+                defaultValue={c.caveat_reason ?? ""}
+                onBlur={async (e) => {
+                  const v = e.target.value.trim() || null;
+                  await supabase.from("criteria").update({ caveat_reason: v }).eq("id", c.id);
+                }}
+              />
+              {c.caveat_reason && (
+                <div className="mt-1 text-xs text-purple-700">Current: {c.caveat_reason}</div>
+              )}
+            </div>
+          )}
         </div>
       )}
+
+      {/* Last Action — full width at the bottom of the card */}
+{lastAction && (
+  <div className="mt-3 -mx-4 border-t border-slate-200 px-4 py-2">
+    <div className="flex items-center justify-between text-xs text-slate-700">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="font-semibold">Last action:</span>
+        <span className="flex items-center gap-1">
+          {lastAction.kind === "note" && <>🗒️ <span>Note</span></>}
+          {lastAction.kind === "link" && <>🔗 <span>Link</span></>}
+          {lastAction.kind === "file" && <>📎 <span>File</span></>}
+        </span>
+        {/* Highlighted note text / url */}
+        <span
+          className="truncate rounded-md bg-slate-100 px-2 py-0.5"
+          title={lastAction.note ?? lastAction.url ?? ""}
+        >
+          {lastAction.kind === "note" ? (lastAction.note ?? "") : (lastAction.url ?? "")}
+        </span>
+      </div>
+      <div className="ml-4 shrink-0 text-[11px] text-slate-500">
+        {new Date(lastAction.uploaded_at).toLocaleString()} — {lastAction.created_by ?? "Unknown"}
+      </div>
+    </div>
+  </div>
+)}
+
+
     </div>
   );
 }
