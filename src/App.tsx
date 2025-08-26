@@ -312,16 +312,43 @@ export default function App() {
     <div className="mx-auto max-w-6xl p-6 space-y-8">
       {/* Header */}
       <header className="mb-6 flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-    <div className="flex items-center gap-3">
-   <img src="/assureops-logo.png" alt="AssureOps logo" className="h-50 w-auto" />
-      <div>
-        
-        <p className="text-slate-600">OR-360 Operational Readiness</p>
+  {/* Top row: Logo + Title + (on larger screens) project selector */}
+   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    {/* Logo + Title */}
+    <div className="flex min-w-0 items-center gap-3">
+      <img
+        src="/assureops-logo.png" // or your current path
+        alt="AssureOps logo"
+        className="h-10 w-auto sm:h-12 md:h-14 lg:h-16"
+      />
+      <div className="min-w-0">
+
+        <p className="text-sm text-slate-600 sm:text-base md:text-lg lg:text-xl">
+          OR 360 - Operational Readiness — enriched checklist
+        </p>
       </div>
     </div>
+
+    {/* Project selector (inline on ≥sm) */}
+    <div className="hidden sm:block">
+      <select
+        className="rounded-xl border border-slate-200 px-3 py-2 md:px-4 md:py-2.5"
+        value={activeProjectId ?? ""}
+        onChange={(e) => setActiveProjectId(e.target.value)}
+      >
+        {projects?.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  </div>
+
+  {/* Project selector for mobile: full width */}
+  <div className="sm:hidden">
     <select
-      className="rounded-xl border border-slate-200 px-3 py-2"
+      className="w-full rounded-xl border border-slate-200 px-3 py-2"
       value={activeProjectId ?? ""}
       onChange={(e) => setActiveProjectId(e.target.value)}
     >
@@ -332,24 +359,6 @@ export default function App() {
       ))}
     </select>
   </div>
-
-        {/* Project quick switcher */}
-        <div className="mt-2 flex items-center gap-3 text-sm text-slate-600">
-          <span>Projects: {projects?.length ?? 0}</span>
-          <div className="flex flex-wrap gap-2">
-            {projects?.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => setActiveProjectId(p.id)}
-                className={`rounded-full border border-slate-200 px-2 py-1 ${activeProjectId === p.id ? "bg-slate-100" : "bg-white"}`}
-                title={p.id}
-              >
-                {p.name}
-              </button>
-            ))}
-          </div>
-        </div>
-		
 	
 
 
