@@ -1,3 +1,4 @@
+// src/OrgContext.tsx
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
 
@@ -14,48 +15,65 @@ const Ctx = createContext<OrgCtx | null>(null);
 
 export function OrgProvider({ children }: { children: React.ReactNode }) {
   const [orgs, setOrgs] = useState<Org[]>([]);
-  const [orgId, setOrgIdState] = useState<string | null>(() =>
-    typeof window !== "undefined" ? localStorage.getItem("or360.orgId") : null
+  const [orgId, setOrgId] = useState<string | null>(
+    localStorage.getItem("orgId") || null
   );
 
-  const setOrgId = (id: string) => {
-    setOrgIdState(id);
-    if (typeof window !== "undefined") localStorage.setItem("or360.orgId", id);
-  };
+  useEffect(() => {
+    localStorage.setItem("orgId", orgId || "");
+  }, [orgId]);
 
   const refresh = async () => {
-    // ensure signed in (demo creds)
+    // 0) Ensure we have a session (auto sign-in using demo creds if provided)
     const { data: sess } = await supabase.auth.getSession();
     if (!sess?.session) {
-      const email = import.meta.env.VITE_DEMO_EMAIL as string;
-      const password = import.meta.env.VITE_DEMO_PASSWORD as string;
-      await supabase.auth.signInWithPassword({ email, password });
+      const email = import.meta.env.VITE_DEMO_EMAIL as string | undefined;
+      const password = import.meta.env.VITE_DEMO_PASSWORD as string | undefined;
+      if (email && password) {
+        await supabase.auth.signInWithPassword({ email, password });
+      }
     }
 
-    const { data: userData } = await supabase.auth.getUser();
-    const uid = userData?.user?.id;
-    if (!uid) { setOrgs([]); return; }
+    // 1) Get current user id
+    const { data: me } = await supabase.auth.getUser();
+    const uid = me?.user?.id;
 
-    // fetch orgs where this user is a member
-    const { data, error } = await supabase
-      .from("orgs")
-      .select("id,name, org_members!inner(user_id)")
-      .eq("org_members.user_id", uid);
+    // 2) Query orgs by membership
+    let list: Org[] = [];
+    if (uid) {
+      const { data, error } = await supabase
+        .from("orgs")
+        .select("id,name, org_members!inner(user_id, status)")
+        .eq("org_members.user_id", uid)
+        .eq("org_members.status", "active")
+        .order("name", { ascending: true });
+      if (!error && data) {
+        list = data.map((o: any) => ({ id: o.id, name: o.name }));
+      }
+    }
 
-    if (error) { console.error(error.message); setOrgs([]); return; }
+    // 3) Fallback: show all orgs (requires RLS policy allowing it for superadmins)
+    if (list.length === 0) {
+      const { data } = await supabase
+        .from("orgs")
+        .select("id,name")
+        .order("name", { ascending: true })
+        .limit(25);
+      list = (data || []) as Org[];
+    }
 
-    const list: Org[] = (data ?? []).map((r: any) => ({ id: r.id, name: r.name }));
     setOrgs(list);
-
-    // set default if none or invalid
-    if ((!orgId || !list.find(o => o.id === orgId)) && list.length) {
-      setOrgId(list[0].id);
-    }
+    if (!orgId && list.length) setOrgId(list[0].id);
   };
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    void refresh();
+  }, []);
 
-  const value = useMemo<OrgCtx>(() => ({ orgs, orgId, setOrgId, refresh }), [orgs, orgId]);
+  const value = useMemo<OrgCtx>(
+    () => ({ orgs, orgId, setOrgId, refresh }),
+    [orgs, orgId]
+  );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

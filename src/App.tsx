@@ -86,6 +86,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [criteria, setCriteria] = useState<Criterion[] | null>(null);
+  const activeProject = useMemo(() => (projects || []).find(p => p.id === activeProjectId) || null, [projects, activeProjectId]);
   const [notes, setNotes] = useState<Note[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -317,6 +318,7 @@ export default function App() {
   {/* Top row: Logo + Title + (on larger screens) project selector */}
    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     {/* Logo + Title */}
+    <div className="text-lg font-semibold truncate max-w-[40ch]">{activeProject?.name || "—"}</div>
 
 
     {/* Project selector (inline on ≥sm) */}
@@ -333,11 +335,19 @@ export default function App() {
         ))}
       </select>
     </div>
+	{activeProjectId && (
+  <Link
+    to={`/projects/${activeProjectId}`}
+    className="hidden sm:inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-100"
+    title="Open project details"
+  >
+    Edit project
+  </Link>
+)}
   </div>
 
   {/* Project selector for mobile: full width */}
-  <div className="sm:hidden">
-    <select
+  <div className="sm:hidden"><div className="mb-1 text-xs text-slate-500">Project</div><select
       className="w-full rounded-xl border border-slate-200 px-3 py-2"
       value={activeProjectId ?? ""}
       onChange={(e) => setActiveProjectId(e.target.value)}
