@@ -193,6 +193,8 @@ export default function Templates() {
       </div>
 	  
 	  
+	  
+	  
 
       {/* Docs table */}
       <section className="rounded-2xl border border-slate-200 bg-white p-0 shadow-sm">
