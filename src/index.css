@@ -1,1 +1,13 @@
 ﻿@import "tailwindcss";
+
+
+:root{
+  --brand: #0B5DBB;          /* logo blue */
+  --brand-dark: #094c9a;     /* hover/darker */
+  --brand-ring: rgba(11,93,187,.35);
+}
+
+.btn{ @apply inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium; }
+.btn-primary{ background: var(--brand); color: #fff; }
+.btn-primary:hover{ background: var(--brand-dark); }
+.btn-primary:focus{ outline: none; box-shadow: 0 0 0 3px var(--brand-ring); }

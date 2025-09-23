@@ -98,6 +98,8 @@ export default function Layout() {
           >
             {open ? <X size={18} /> : <Menu size={18} />}
           </button>
+        </div>
+        <div className="flex items-center gap-2">
           <img src="/icon-32.png" alt="AssureOps" className="h-6 w-6" />
           <span className="text-sm font-semibold">AssureOps — OR-360</span>
         </div>
@@ -113,9 +115,7 @@ export default function Layout() {
       <div className="mx-auto flex max-w-7xl">
         {/* Sidebar */}
         <aside
-          className={`${
-            open ? "block" : "hidden"
-          } fixed inset-y-0 left-0 z-30 w-72 bg-white border-r border-slate-200 p-4 lg:static lg:block lg:shrink-0`}
+          className={`${open ? "block" : "hidden"} fixed inset-y-0 left-0 z-30 w-72 bg-white border-r border-slate-200 p-4 lg:static lg:block lg:shrink-0`}
         >
           <div className="flex items-center gap-2 mb-4">
             <img src="/icon-32.png" alt="AssureOps" className="h-7 w-7" />
@@ -156,9 +156,10 @@ export default function Layout() {
           {/* Library */}
           <SectionTitle>Library</SectionTitle>
           <nav className="flex flex-col gap-1">
-            <NavBtn disabled title="Coming soon: criteria and project templates">
+            {/* Enabled Templates link */}
+            <NavLink to="/templates" className={({ isActive }) => `${linkBase} ${isActive ? active : idle}`}>
               <Layers size={16} /> Templates
-            </NavBtn>
+            </NavLink>
             <NavBtn disabled title="Coming soon: all uploaded evidence">
               <FileArchive size={16} /> Evidence
             </NavBtn>
