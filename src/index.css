@@ -11,3 +11,5 @@
 .btn-primary{ background: var(--brand); color: #fff; }
 .btn-primary:hover{ background: var(--brand-dark); }
 .btn-primary:focus{ outline: none; box-shadow: 0 0 0 3px var(--brand-ring); }
+.btn { @apply inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors; }
+.btn-primary { @apply bg-[var(--brand,#0B5DBB)] text-white hover:brightness-95; }

@@ -1,8 +1,8 @@
-// src/Templates.tsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { useOrg } from "./OrgContext";
 import { Upload, FileText, ExternalLink, Download, Trash2, X } from "lucide-react";
+import ConfirmDialog from "./components/ConfirmDialog";
 
 type TemplateDoc = {
   id: string;
@@ -31,17 +31,21 @@ export default function Templates() {
   const [category, setCategory] = useState("");
   const [uploading, setUploading] = useState(false);
 
+  // Confirm delete
+  const [toDelete, setToDelete] = useState<TemplateDoc | null>(null);
+
   useEffect(() => {
     if (!orgId) return;
     let alive = true;
     (async () => {
       setLoading(true);
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("template_docs")
         .select("*")
         .eq("org_id", orgId)
         .order("created_at", { ascending: false });
       if (!alive) return;
+      if (error) console.error(error);
       setDocs(data ?? []);
       setLoading(false);
     })();
@@ -68,11 +72,6 @@ export default function Templates() {
     setDocs(data ?? []);
   }
 
-  const onlyFileName = (path: string) => {
-    const parts = path.split("/");
-    return parts[parts.length - 1] || path;
-  };
-
   async function openDoc(storage_path: string) {
     const { data, error } = await supabase.storage
       .from("template_docs")
@@ -89,18 +88,17 @@ export default function Templates() {
     window.open(data.signedUrl, "_blank");
   }
 
-  async function deleteDoc(row: TemplateDoc) {
-    if (!confirm(`Delete "${row.name}"? This will also remove the file.`)) return;
-    const { error } = await supabase.from("template_docs").delete().eq("id", row.id);
-    if (error) return alert(error.message);
-    await refreshList();
-  }
-
   function resetModal() {
     setFile(null);
     setTitle("");
     setCategory("");
     setUploading(false);
+  }
+
+  function onChooseFile(f: File) {
+    setFile(f);
+    const base = f.name.replace(/\.[^.]+$/, "");
+    setTitle(base);
   }
 
   async function confirmUpload() {
@@ -138,7 +136,7 @@ export default function Templates() {
         storage_path: path,
         mime_type: mime,
         created_by: me?.user?.id ?? null,
-        extracted: null
+        extracted: null,
       };
       if (cat !== null) payload.category = cat;
 
@@ -154,13 +152,6 @@ export default function Templates() {
     } finally {
       setUploading(false);
     }
-  }
-
-  function onChooseFile(f: File) {
-    setFile(f);
-    // Prefill Title from filename (without extension)
-    const base = f.name.replace(/\.[^.]+$/, "");
-    setTitle(base);
   }
 
   return (
@@ -191,10 +182,6 @@ export default function Templates() {
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
         />
       </div>
-	  
-	  
-	  
-	  
 
       {/* Docs table */}
       <section className="rounded-2xl border border-slate-200 bg-white p-0 shadow-sm">
@@ -220,11 +207,9 @@ export default function Templates() {
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-slate-400" />
                         <div className="min-w-0">
-                          {/* Show only the filename, truncated */}
                           <div className="truncate font-medium max-w-[52vw]">
-                            {d.name || onlyFileName(d.storage_path)}
+                            {d.name}
                           </div>
-                          {/* Removed path line to avoid horizontal scroll */}
                         </div>
                       </div>
                     </td>
@@ -243,14 +228,14 @@ export default function Templates() {
                         </button>
                         <button
                           className="inline-flex items-center gap-1 text-blue-700 hover:underline"
-                          onClick={() => downloadDoc(d.storage_path, d.name || onlyFileName(d.storage_path))}
+                          onClick={() => downloadDoc(d.storage_path, d.name)}
                           title="Download"
                         >
                           <Download className="h-4 w-4" /> Download
                         </button>
                         <button
                           className="inline-flex items-center gap-1 text-red-700 hover:underline"
-                          onClick={() => deleteDoc(d)}
+                          onClick={() => setToDelete(d)}
                           title="Delete"
                         >
                           <Trash2 className="h-4 w-4" /> Delete
@@ -265,7 +250,7 @@ export default function Templates() {
         </div>
       </section>
 
-      {/* Upload Modal (hidden panel) */}
+      {/* Upload Modal */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-2xl rounded-2xl border border-slate-300 bg-white p-4 shadow-2xl">
@@ -339,6 +324,32 @@ export default function Templates() {
           </div>
         </div>
       )}
+
+      {/* Delete confirm dialog */}
+      <ConfirmDialog
+        open={!!toDelete}
+        title="Delete document?"
+        message={
+          <div className="space-y-1">
+            <div>This will also remove the stored file.</div>
+            <div className="text-slate-500 text-xs">{toDelete?.name}</div>
+          </div>
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        onCancel={() => setToDelete(null)}
+        onConfirm={async () => {
+          if (!toDelete) return;
+          const { error } = await supabase
+            .from("template_docs")
+            .delete()
+            .eq("id", toDelete.id);
+          if (error) alert(error.message);
+          else await refreshList();
+          setToDelete(null);
+        }}
+      />
     </div>
   );
 }
