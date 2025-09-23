@@ -1,167 +1,118 @@
+// src/Templates.tsx
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { useOrg } from "./OrgContext";
-import { Link } from "react-router-dom";
-import * as mammoth from "mammoth";
-import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
-import pdfWorker from "pdfjs-dist/build/pdf.worker.min?url";
-
-GlobalWorkerOptions.workerSrc = pdfWorker;
-
-type TemplateSet = {
-  id: string;
-  name: string;
-  description: string | null;
-  org_id: string | null;
-  created_at: string;
-};
-
-type ChecklistTemplate = {
-  id: string;
-  template_id: string;
-  title: string;
-  category: string | null;
-  sort_order: number | null;
-};
-
-type ProjectLite = {
-  id: string;
-  name: string;
-};
+import { Upload, FileText, ExternalLink, Download, Trash2, X } from "lucide-react";
 
 type TemplateDoc = {
   id: string;
   org_id: string;
   template_set_id: string | null;
   name: string;
-  storage_path: string;
+  storage_path: string;  // <org_id>/<uuid>_filename.ext
   mime_type: string;
   created_by: string | null;
   created_at: string;
   extracted: any | null;
+  notes: string | null;
+  category?: string | null;
 };
-
-type ProposedItem = { title: string; category: string | null; sort_order: number };
-
-const bulletRe = /^[-–•*]\s+|^\d+\.\s+/;
-
-function guessItemsFromText(text: string): ProposedItem[] {
-  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  // Heuristic: bullet/numbered lines or short heading-like lines
-  const raw = lines.filter(l => bulletRe.test(l) || (l.length > 2 && l.length <= 140));
-  const cleaned = raw.map((l, i) => ({
-    title: l.replace(bulletRe, "").trim(),
-    category: null as string | null,
-    sort_order: i + 1
-  })).filter(i => i.title.length >= 3);
-  const seen = new Set<string>();
-  return cleaned.filter(i => {
-    const k = i.title.toLowerCase();
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-}
-
-async function extractDocx(file: File) {
-  const arrayBuffer = await file.arrayBuffer();
-  const res = await mammoth.extractRawText({ arrayBuffer });
-  return res.value || "";
-}
-
-async function extractPdf(file: File) {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await getDocument({ data: arrayBuffer }).promise;
-  let full = "";
-  for (let p = 1; p <= pdf.numPages; p++) {
-    const page = await pdf.getPage(p);
-    const tc = await page.getTextContent();
-    full += tc.items.map((it: any) => it.str).join(" ") + "\n";
-  }
-  return full;
-}
 
 export default function Templates() {
   const { orgId } = useOrg();
-  const [prebuilt, setPrebuilt] = useState<TemplateSet[]>([]);
-  const [mine, setMine] = useState<TemplateSet[]>([]);
-  const [selected, setSelected] = useState<TemplateSet | null>(null);
-  const [items, setItems] = useState<ChecklistTemplate[]>([]);
+  const [docs, setDocs] = useState<TemplateDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [projects, setProjects] = useState<ProjectLite[]>([]);
-  const [projectId, setProjectId] = useState<string>("");
-  const [docs, setDocs] = useState<TemplateDoc[]>([]);
 
-  // Extraction review state
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [proposedName, setProposedName] = useState("");
-  const [proposedItems, setProposedItems] = useState<ProposedItem[]>([]);
-  const [sourceFileInfo, setSourceFileInfo] = useState<{ storage_path: string; mime_type: string; name: string } | null>(null);
+  // Upload modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
-    let mounted = true;
+    if (!orgId) return;
+    let alive = true;
     (async () => {
       setLoading(true);
-      const [{ data: pre }, { data: yours }, { data: projs }, { data: myDocs }] = await Promise.all([
-        supabase.from("template_sets").select("id,name,description,org_id,created_at").is("org_id", null).order("name", { ascending: true }),
-        supabase.from("template_sets").select("id,name,description,org_id,created_at").eq("org_id", orgId).order("created_at", { ascending: false }),
-        supabase.from("projects").select("id,name").eq("org_id", orgId).order("created_at", { ascending: false }),
-        supabase.from("template_docs").select("*").eq("org_id", orgId).order("created_at", { ascending: false })
-      ]);
-      if (!mounted) return;
-      setPrebuilt(pre ?? []);
-      setMine(yours ?? []);
-      setProjects(projs ?? []);
-      setProjectId(projs?.[0]?.id ?? "");
-      setDocs(myDocs ?? []);
+      const { data } = await supabase
+        .from("template_docs")
+        .select("*")
+        .eq("org_id", orgId)
+        .order("created_at", { ascending: false });
+      if (!alive) return;
+      setDocs(data ?? []);
       setLoading(false);
     })();
-    return () => { mounted = false; };
+    return () => { alive = false; };
   }, [orgId]);
-
-  useEffect(() => {
-    (async () => {
-      if (!selected) { setItems([]); return; }
-      const { data } = await supabase
-        .from("checklist_templates")
-        .select("id,template_id,title,category,sort_order")
-        .eq("template_id", selected.id)
-        .order("sort_order", { ascending: true });
-      setItems(data ?? []);
-    })();
-  }, [selected?.id]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(i =>
-      (i.title ?? "").toLowerCase().includes(q) ||
-      (i.category ?? "").toLowerCase().includes(q)
+    if (!q) return docs;
+    return docs.filter(d =>
+      (d.name?.toLowerCase().includes(q)) ||
+      (d.category?.toLowerCase().includes(q)) ||
+      (new Date(d.created_at).toLocaleString().toLowerCase().includes(q))
     );
-  }, [items, search]);
+  }, [docs, search]);
 
-  async function applyToProject() {
-    if (!selected || !projectId) return;
-    const { error } = await supabase.rpc("apply_template", {
-      p_project: projectId,
-      p_template: selected.id,
-    });
-    if (error) { alert(`Apply failed: ${error.message}`); return; }
-    alert("Template applied to project!");
+  async function refreshList() {
+    if (!orgId) return;
+    const { data } = await supabase
+      .from("template_docs")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false });
+    setDocs(data ?? []);
   }
 
-  async function onUploadFile(file: File) {
-    try {
-      const ext = (file.name.split(".").pop() || "").toLowerCase();
-      if (!["pdf", "docx"].includes(ext)) {
-        alert("Please upload a PDF or DOCX file.");
-        return;
-      }
-      const mime = ext === "pdf"
-        ? "application/pdf"
-        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const onlyFileName = (path: string) => {
+    const parts = path.split("/");
+    return parts[parts.length - 1] || path;
+  };
 
+  async function openDoc(storage_path: string) {
+    const { data, error } = await supabase.storage
+      .from("template_docs")
+      .createSignedUrl(storage_path, 300);
+    if (error) return alert(error.message);
+    window.open(data.signedUrl, "_blank");
+  }
+
+  async function downloadDoc(storage_path: string, filename: string) {
+    const { data, error } = await supabase.storage
+      .from("template_docs")
+      .createSignedUrl(storage_path, 300, { download: filename });
+    if (error) return alert(error.message);
+    window.open(data.signedUrl, "_blank");
+  }
+
+  async function deleteDoc(row: TemplateDoc) {
+    if (!confirm(`Delete "${row.name}"? This will also remove the file.`)) return;
+    const { error } = await supabase.from("template_docs").delete().eq("id", row.id);
+    if (error) return alert(error.message);
+    await refreshList();
+  }
+
+  function resetModal() {
+    setFile(null);
+    setTitle("");
+    setCategory("");
+    setUploading(false);
+  }
+
+  async function confirmUpload() {
+    if (!orgId) return alert("Select an organisation first.");
+    if (!file) return alert("Choose a file.");
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    if (!["pdf", "docx", "doc"].includes(ext)) {
+      return alert("Please upload a PDF or Word document (.pdf, .docx, .doc).");
+    }
+
+    setUploading(true);
+    try {
       // 1) Upload to Storage
       const path = `${orgId}/${crypto.randomUUID()}_${file.name}`;
       const { error: upErr } = await supabase.storage
@@ -169,300 +120,220 @@ export default function Templates() {
         .upload(path, file, { upsert: false });
       if (upErr) throw upErr;
 
-      // 2) Extract text client-side
-      let text = "";
-      if (ext === "docx") text = await extractDocx(file);
-      if (ext === "pdf")  text = await extractPdf(file);
-
-      // 3) Build proposed items and open review dialog
-      const proposed = guessItemsFromText(text);
-      setProposedName(file.name.replace(/\.[^.]+$/, ""));
-      setProposedItems(proposed);
-      setSourceFileInfo({ storage_path: path, mime_type: mime, name: file.name });
-      setReviewOpen(true);
-    } catch (e: any) {
-      alert(e?.message ?? String(e));
-    }
-  }
-
-  async function saveReviewedTemplate() {
-    if (!sourceFileInfo) return;
-    try {
-      // 4) Create template_set
-      const setId = crypto.randomUUID();
-      const { data: setRow, error: setErr } = await supabase
-        .from("template_sets")
-        .insert({
-          id: setId,
-          name: proposedName || "Imported Template",
-          description: "Imported from document",
-          org_id: orgId
-        })
-        .select()
-        .single();
-      if (setErr) throw setErr;
-
-      // 5) Insert checklist items
-      if (proposedItems.length) {
-        const rows = proposedItems.map((it, i) => ({
-          id: crypto.randomUUID(),
-          template_id: setId,
-          title: it.title,
-          category: it.category,
-          sort_order: Number.isFinite(it.sort_order as any) ? it.sort_order : i + 1
-        }));
-        const { error: itemsErr } = await supabase.from("checklist_templates").insert(rows);
-        if (itemsErr) throw itemsErr;
-      }
-
-      // 6) Insert audit row
+      // 2) Insert audit row
       const { data: me } = await supabase.auth.getUser();
-      await supabase.from("template_docs").insert({
-        org_id: orgId,
-        template_set_id: setId,
-        name: sourceFileInfo.name,
-        storage_path: sourceFileInfo.storage_path,
-        mime_type: sourceFileInfo.mime_type,
-        created_by: me?.user?.id ?? null,
-        extracted: proposedItems.length ? { items: proposedItems } : null
-      });
+      const mime = file.type || (ext === "pdf"
+        ? "application/pdf"
+        : ext === "docx"
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : "application/msword");
 
-      // 7) Refresh “Your templates” & “Docs”
-      const [{ data: yours }, { data: myDocs }] = await Promise.all([
-        supabase.from("template_sets").select("id,name,description,org_id,created_at").eq("org_id", orgId).order("created_at", { ascending: false }),
-        supabase.from("template_docs").select("*").eq("org_id", orgId).order("created_at", { ascending: false })
-      ]);
-      setMine(yours ?? []);
-      setDocs(myDocs ?? []);
-      setReviewOpen(false);
-      setSelected(setRow);
-      alert("Template created from document.");
+      const displayName = title.trim() || file.name;
+      const cat = category.trim() || null;
+
+      const payload: any = {
+        org_id: orgId,
+        template_set_id: null,
+        name: displayName,
+        storage_path: path,
+        mime_type: mime,
+        created_by: me?.user?.id ?? null,
+        extracted: null
+      };
+      if (cat !== null) payload.category = cat;
+
+      const { error: insErr } = await supabase.from("template_docs").insert(payload);
+      if (insErr) throw insErr;
+
+      // 3) Done
+      await refreshList();
+      setModalOpen(false);
+      resetModal();
     } catch (e: any) {
       alert(e?.message ?? String(e));
+    } finally {
+      setUploading(false);
     }
   }
 
-  function removeProposedRow(idx: number) {
-    setProposedItems(prev => prev.filter((_, i) => i !== idx));
+  function onChooseFile(f: File) {
+    setFile(f);
+    // Prefill Title from filename (without extension)
+    const base = f.name.replace(/\.[^.]+$/, "");
+    setTitle(base);
   }
-  function updateProposedRow(idx: number, patch: Partial<ProposedItem>) {
-    setProposedItems(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
-  }
-
-  if (loading) return <div className="p-4 text-sm text-slate-600">Loading templates…</div>;
 
   return (
     <div className="p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Templates</h1>
-        <div className="flex gap-2">
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">
-            <input
-              type="file"
-              accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              className="hidden"
-              onChange={e => e.target.files?.[0] && onUploadFile(e.target.files[0])}
-            />
-            Upload PDF / Word
-          </label>
-          <Link to="/projects" className="hidden sm:inline-flex items-center rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-100">
-            Manage Projects
-          </Link>
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="truncate text-xl font-semibold">Document Templates</h1>
+          <p className="text-sm text-slate-600">Upload and manage your template source documents (PDF / Word).</p>
         </div>
+        <button
+          className="btn btn-primary"
+          onClick={() => setModalOpen(true)}
+          disabled={!orgId}
+          title={!orgId ? "Select an organisation first" : "Upload a document"}
+        >
+          <Upload className="h-4 w-4" />
+          <span>Upload Document</span>
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        {/* Left: Libraries */}
-        <div className="space-y-4 xl:col-span-1">
-          <section className="rounded-xl border border-slate-200 bg-white">
-            <div className="border-b border-slate-200 p-3 text-sm font-semibold">Pre-built (ITIL / OR)</div>
-            <ul className="max-h-72 overflow-auto p-2">
-              {prebuilt.map(t => (
-                <li key={t.id}>
-                  <button
-                    className={`w-full rounded-lg px-2 py-2 text-left hover:bg-slate-50 ${selected?.id === t.id ? "bg-slate-100" : ""}`}
-                    onClick={() => setSelected(t)}
-                  >
-                    <div className="text-sm font-medium">{t.name}</div>
-                    {t.description && <div className="truncate text-xs text-slate-500">{t.description}</div>}
-                  </button>
-                </li>
-              ))}
-              {prebuilt.length === 0 && <li className="p-2 text-xs text-slate-500">No pre-built templates yet.</li>}
-            </ul>
-          </section>
+      {/* Search */}
+      <div className="flex items-center justify-between gap-3">
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search documents by title or category…"
+          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        />
+      </div>
 
-          <section className="rounded-xl border border-slate-200 bg-white">
-            <div className="border-b border-slate-200 p-3 text-sm font-semibold">Your templates</div>
-            <ul className="max-h-72 overflow-auto p-2">
-              {mine.map(t => (
-                <li key={t.id}>
-                  <button
-                    className={`w-full rounded-lg px-2 py-2 text-left hover:bg-slate-50 ${selected?.id === t.id ? "bg-slate-100" : ""}`}
-                    onClick={() => setSelected(t)}
-                  >
-                    <div className="text-sm font-medium">{t.name}</div>
-                    {t.description && <div className="truncate text-xs text-slate-500">{t.description}</div>}
-                  </button>
-                </li>
-              ))}
-              {mine.length === 0 && <li className="p-2 text-xs text-slate-500">You haven’t uploaded any templates yet.</li>}
-            </ul>
-          </section>
-
-          <section className="rounded-xl border border-slate-200 bg-white">
-            <div className="border-b border-slate-200 p-3 text-sm font-semibold">Your uploaded docs</div>
-            <ul className="max-h-72 overflow-auto p-2">
-              {docs.map(d => (
-                <li key={d.id} className="rounded-lg px-2 py-2 hover:bg-slate-50">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">{d.name}</div>
-                      <div className="truncate text-xs text-slate-500">{new Date(d.created_at).toLocaleString()}</div>
-                    </div>
-                    {d.template_set_id ? (
-                      <Link to="#" onClick={() => setSelected({ id: d.template_set_id, name: "", description: null, org_id: orgId!, created_at: "" } as any)} className="text-xs text-blue-700 hover:underline">
-                        View set
-                      </Link>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
-              {docs.length === 0 && <li className="p-2 text-xs text-slate-500">No documents uploaded yet.</li>}
-            </ul>
-          </section>
-        </div>
-
-        {/* Right: Preview + Apply */}
-        <div className="xl:col-span-2 space-y-3">
-          <section className="rounded-xl border border-slate-200 bg-white p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="min-w-0">
-                <div className="text-sm font-semibold">{selected ? selected.name : "Select a template"}</div>
-                {selected?.description && <div className="truncate text-xs text-slate-500">{selected.description}</div>}
-              </div>
-              <div className="flex items-center gap-2">
-                <select
-                  value={projectId}
-                  onChange={e => setProjectId(e.target.value)}
-                  className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm"
-                  title="Choose project to apply to"
-                >
-                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-                <button className="btn btn-primary" disabled={!selected || !projectId} onClick={applyToProject}>
-                  Apply to project
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-3">
-              <input
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Search items (title/category)…"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-            </div>
-
-            <div className="mt-3 max-h-[60vh] overflow-auto rounded-lg border border-slate-200">
-              {selected ? (
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-slate-50 text-slate-600">
-                    <tr>
-                      <th className="px-3 py-2 text-left">#</th>
-                      <th className="px-3 py-2 text-left">Title</th>
-                      <th className="px-3 py-2 text-left">Category</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((i, idx) => (
-                      <tr key={i.id} className="border-t border-slate-100">
-                        <td className="px-3 py-2 w-12">{i.sort_order ?? idx + 1}</td>
-                        <td className="px-3 py-2">{i.title}</td>
-                        <td className="px-3 py-2 text-slate-500">{i.category ?? "—"}</td>
-                      </tr>
-                    ))}
-                    {filtered.length === 0 && (
-                      <tr><td colSpan={3} className="px-3 py-6 text-center text-slate-500">No items match your search.</td></tr>
-                    )}
-                  </tbody>
-                </table>
+      {/* Docs table */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-0 shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-slate-50 text-slate-600">
+              <tr className="border-b border-slate-200">
+                <th className="px-4 py-3 text-left w-[45%]">Document title</th>
+                <th className="px-4 py-3 text-left w-[20%]">Category</th>
+                <th className="px-4 py-3 text-left w-[20%]">Uploaded</th>
+                <th className="px-4 py-3 text-left w-[15%]">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={4} className="px-4 py-6 text-center text-slate-500">Loading…</td></tr>
+              ) : filtered.length === 0 ? (
+                <tr><td colSpan={4} className="px-4 py-10 text-center text-slate-500">No documents yet.</td></tr>
               ) : (
-                <div className="p-6 text-center text-slate-500">Choose a template on the left to preview its checklist items.</div>
-              )}
-            </div>
-          </section>
-        </div>
-      </div>
-
-      {/* Review dialog (simple inline panel) */}
-      {reviewOpen && (
-        <section className="rounded-2xl border border-slate-300 bg-white p-4 shadow-lg">
-          <div className="flex items-center justify-between">
-            <div className="text-sm font-semibold">Review extracted items</div>
-            <button className="text-xs text-slate-500 hover:underline" onClick={() => setReviewOpen(false)}>Close</button>
-          </div>
-          <div className="mt-3 flex flex-col gap-2">
-            <label className="text-xs text-slate-600">Template name</label>
-            <input
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              value={proposedName}
-              onChange={e => setProposedName(e.target.value)}
-            />
-          </div>
-          <div className="mt-3 max-h-[40vh] overflow-auto rounded-lg border border-slate-200">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="px-3 py-2 text-left w-14">#</th>
-                  <th className="px-3 py-2 text-left">Title</th>
-                  <th className="px-3 py-2 text-left">Category</th>
-                  <th className="px-3 py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {proposedItems.map((r, idx) => (
-                  <tr key={idx} className="border-t border-slate-100">
-                    <td className="px-3 py-2 w-14">
-                      <input
-                        type="number"
-                        className="w-14 rounded border border-slate-300 px-2 py-1"
-                        value={r.sort_order}
-                        onChange={e => updateProposedRow(idx, { sort_order: Number(e.target.value) })}
-                      />
+                filtered.map((d) => (
+                  <tr key={d.id} className="border-b border-slate-100">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <FileText className="h-4 w-4 text-slate-400" />
+                        <div className="min-w-0">
+                          {/* Show only the filename, truncated */}
+                          <div className="truncate font-medium max-w-[52vw]">
+                            {d.name || onlyFileName(d.storage_path)}
+                          </div>
+                          {/* Removed path line to avoid horizontal scroll */}
+                        </div>
+                      </div>
                     </td>
-                    <td className="px-3 py-2">
-                      <input
-                        className="w-full rounded border border-slate-300 px-2 py-1"
-                        value={r.title}
-                        onChange={e => updateProposedRow(idx, { title: e.target.value })}
-                      />
+                    <td className="px-4 py-3 text-slate-700">{d.category ?? "—"}</td>
+                    <td className="px-4 py-3 text-slate-700">
+                      {new Date(d.created_at).toLocaleString()}
                     </td>
-                    <td className="px-3 py-2">
-                      <input
-                        className="w-full rounded border border-slate-300 px-2 py-1"
-                        placeholder="(optional)"
-                        value={r.category ?? ""}
-                        onChange={e => updateProposedRow(idx, { category: e.target.value || null })}
-                      />
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button className="text-xs text-red-600 hover:underline" onClick={() => removeProposedRow(idx)}>Remove</button>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button
+                          className="inline-flex items-center gap-1 text-blue-700 hover:underline"
+                          onClick={() => openDoc(d.storage_path)}
+                          title="Open"
+                        >
+                          <ExternalLink className="h-4 w-4" /> Open
+                        </button>
+                        <button
+                          className="inline-flex items-center gap-1 text-blue-700 hover:underline"
+                          onClick={() => downloadDoc(d.storage_path, d.name || onlyFileName(d.storage_path))}
+                          title="Download"
+                        >
+                          <Download className="h-4 w-4" /> Download
+                        </button>
+                        <button
+                          className="inline-flex items-center gap-1 text-red-700 hover:underline"
+                          onClick={() => deleteDoc(d)}
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" /> Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
-                ))}
-                {proposedItems.length === 0 && (
-                  <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-500">No items detected. You can still save an empty template.</td></tr>
-                )}
-              </tbody>
-            </table>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Upload Modal (hidden panel) */}
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-slate-300 bg-white p-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold">Upload Document</div>
+              <button className="p-1 text-slate-500 hover:text-slate-700" onClick={() => { setModalOpen(false); resetModal(); }}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-slate-600">Choose file</label>
+                <label className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm hover:bg-slate-50">
+                  <span className="truncate">{file ? file.name : "Select a PDF / DOCX / DOC"}</span>
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    className="hidden"
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      if (f) onChooseFile(f);
+                      e.currentTarget.value = "";
+                    }}
+                    disabled={uploading}
+                  />
+                  <span className="rounded-md border border-slate-300 px-3 py-1 text-xs">Browse</span>
+                </label>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Document title</label>
+                <input
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="e.g., OR Baseline SAC v1"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  disabled={uploading}
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Category</label>
+                <input
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="e.g., ITIL, Governance, OR"
+                  value={category}
+                  onChange={e => setCategory(e.target.value)}
+                  disabled={uploading}
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                onClick={() => { setModalOpen(false); resetModal(); }}
+                disabled={uploading}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={confirmUpload}
+                disabled={!file || uploading || !orgId}
+                title={!orgId ? "Select an organisation first" : ""}
+              >
+                {uploading ? "Uploading…" : "Upload Document"}
+              </button>
+            </div>
           </div>
-          <div className="mt-3 flex justify-end gap-2">
-            <button className="rounded-lg border border-slate-300 px-3 py-2 text-sm" onClick={() => setReviewOpen(false)}>Cancel</button>
-            <button className="btn btn-primary" onClick={saveReviewedTemplate}>Save template</button>
-          </div>
-        </section>
+        </div>
       )}
     </div>
   );
