@@ -101,58 +101,68 @@ export default function Templates() {
     setTitle(base);
   }
 
-  async function confirmUpload() {
-    if (!orgId) return alert("Select an organisation first.");
-    if (!file) return alert("Choose a file.");
-    const ext = (file.name.split(".").pop() || "").toLowerCase();
-    if (!["pdf", "docx", "doc"].includes(ext)) {
-      return alert("Please upload a PDF or Word document (.pdf, .docx, .doc).");
-    }
-
-    setUploading(true);
-    try {
-      // 1) Upload to Storage
-      const path = `${orgId}/${crypto.randomUUID()}_${file.name}`;
-      const { error: upErr } = await supabase.storage
-        .from("template_docs")
-        .upload(path, file, { upsert: false });
-      if (upErr) throw upErr;
-
-      // 2) Insert audit row
-      const { data: me } = await supabase.auth.getUser();
-      const mime = file.type || (ext === "pdf"
-        ? "application/pdf"
-        : ext === "docx"
-        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        : "application/msword");
-
-      const displayName = title.trim() || file.name;
-      const cat = category.trim() || null;
-
-      const payload: any = {
-        org_id: orgId,
-        template_set_id: null,
-        name: displayName,
-        storage_path: path,
-        mime_type: mime,
-        created_by: me?.user?.id ?? null,
-        extracted: null,
-      };
-      if (cat !== null) payload.category = cat;
-
-      const { error: insErr } = await supabase.from("template_docs").insert(payload);
-      if (insErr) throw insErr;
-
-      // 3) Done
-      await refreshList();
-      setModalOpen(false);
-      resetModal();
-    } catch (e: any) {
-      alert(e?.message ?? String(e));
-    } finally {
-      setUploading(false);
-    }
+// In src/Templates.tsx — replace your existing confirmUpload() with this:
+async function confirmUpload() {
+  if (!orgId) return alert("Select an organisation first.");
+  if (!file) return alert("Choose a file.");
+  const ext = (file.name.split(".").pop() || "").toLowerCase();
+  if (!["pdf", "docx", "doc"].includes(ext)) {
+    return alert("Please upload a PDF or Word document (.pdf, .docx, .doc).");
   }
+
+  setUploading(true);
+  let stage = "start"; // <-- stage marker for debugging
+
+  try {
+    // 1) Upload to Storage
+    stage = "upload_to_storage";
+    const path = `${orgId}/${crypto.randomUUID()}_${file.name}`;
+    const { error: upErr } = await supabase.storage
+      .from("template_docs")
+      .upload(path, file, { upsert: false });
+    if (upErr) throw upErr;
+
+    // 2) Insert audit row
+    stage = "insert_template_doc";
+    const { data: me } = await supabase.auth.getUser();
+    const mime = file.type || (ext === "pdf"
+      ? "application/pdf"
+      : ext === "docx"
+      ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      : "application/msword");
+
+    const displayName = title.trim() || file.name;
+    const cat = category.trim() || null;
+
+    const payload: any = {
+      org_id: orgId,
+      template_set_id: null,
+      name: displayName,
+      storage_path: path,
+      mime_type: mime,
+      created_by: me?.user?.id ?? null,
+      extracted: null,
+    };
+    if (cat !== null) payload.category = cat;
+
+    const { error: insErr } = await supabase.from("template_docs").insert(payload);
+    if (insErr) throw insErr;
+
+    // 3) Refresh list
+    stage = "refresh_list";
+    await refreshList();
+
+    // 4) Close modal
+    stage = "close_modal";
+    setModalOpen(false);
+    resetModal();
+  } catch (e: any) {
+    alert(`Failed at stage: ${stage}\n${e?.message ?? e}`);
+  } finally {
+    setUploading(false);
+  }
+}
+
 
   return (
     <div className="p-4 space-y-4">
