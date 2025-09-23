@@ -191,6 +191,8 @@ export default function Templates() {
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
         />
       </div>
+	  
+	  
 
       {/* Docs table */}
       <section className="rounded-2xl border border-slate-200 bg-white p-0 shadow-sm">
