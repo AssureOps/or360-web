@@ -1,6 +1,6 @@
 // src/Layout.tsx
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useOrg, type Org } from "./OrgContext";
 import {
   Menu, X, Plus,
@@ -84,20 +84,29 @@ function OrgSelectInline() {
 
 export default function Layout() {
   const nav = useNavigate();
-  const [open, setOpen] = useState(false); // mobile drawer state
+  const location = useLocation();
+
+  // Mobile drawer open/close
+  const [open, setOpen] = useState(false);
+
+  // Persistent desktop collapse state
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     return typeof window !== "undefined" &&
       localStorage.getItem("sidebarCollapsed") === "1";
   });
-
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem("sidebarCollapsed", collapsed ? "1" : "0");
     }
   }, [collapsed]);
 
-  const linkBase = `${collapsed ? "px-2 justify-center" : "px-3"
-    } py-2 rounded-lg text-sm flex items-center gap-2 transition-colors`;
+  // Close the mobile drawer on any route change
+  useEffect(() => {
+    setOpen(false);
+  }, [location.pathname]);
+
+  const linkBase =
+    `${collapsed ? "px-2 justify-center" : "px-3"} py-2 rounded-lg text-sm flex items-center gap-2 transition-colors`;
   const active = "bg-slate-900 text-white";
   const idle = "text-slate-700 hover:text-slate-900 hover:bg-slate-200";
 
@@ -127,6 +136,13 @@ export default function Layout() {
         </button>
       </div>
 
+      {/* Backdrop (mobile only) */}
+      <div
+        className={`${open ? "fixed inset-0 z-20 bg-black/20 lg:hidden" : "hidden"}`}
+        onClick={() => setOpen(false)}
+        aria-hidden="true"
+      />
+
       <div className="flex w-full">
         {/* Sidebar */}
         <aside
@@ -155,17 +171,28 @@ export default function Layout() {
           {/* Workspace */}
           {!collapsed && <SectionTitle>Workspace</SectionTitle>}
           <nav className="flex flex-col gap-1">
-            <NavLink to="/" className={({ isActive }) => `${linkBase} ${isActive ? active : idle}`}>
+            <NavLink
+              to="/"
+              onClick={() => setOpen(false)}
+              className={({ isActive }) => `${linkBase} ${isActive ? active : idle}`}
+            >
               <ClipboardCheck size={16} />{" "}
               <span className={collapsed ? "hidden" : ""}>Checklist</span>
             </NavLink>
-            <NavLink to="/dashboard" className={({ isActive }) => `${linkBase} ${isActive ? active : idle}`}>
+            <NavLink
+              to="/dashboard"
+              onClick={() => setOpen(false)}
+              className={({ isActive }) => `${linkBase} ${isActive ? active : idle}`}
+            >
               <PieChart size={16} />{" "}
               <span className={collapsed ? "hidden" : ""}>Dashboard</span>
             </NavLink>
             <NavBtn
               collapsed={collapsed}
-              onClick={() => window.dispatchEvent(new CustomEvent("export-certificate"))}
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("export-certificate"));
+                setOpen(false);
+              }}
               title="Generate Operational Acceptance Certificate"
             >
               <FileCheck2 size={16} />{" "}
@@ -180,7 +207,11 @@ export default function Layout() {
               <Building2 size={16} />{" "}
               <span className={collapsed ? "hidden" : ""}>Orgs</span>
             </NavBtn>
-            <NavLink to="/org-users" className={({ isActive }) => `${linkBase} ${isActive ? active : idle}`}>
+            <NavLink
+              to="/org-users"
+              onClick={() => setOpen(false)}
+              className={({ isActive }) => `${linkBase} ${isActive ? active : idle}`}
+            >
               <Users size={16} />{" "}
               <span className={collapsed ? "hidden" : ""}>Org Users</span>
             </NavLink>
@@ -193,7 +224,11 @@ export default function Layout() {
           {/* Library */}
           {!collapsed && <SectionTitle>Library</SectionTitle>}
           <nav className="flex flex-col gap-1">
-            <NavLink to="/templates" className={({ isActive }) => `${linkBase} ${isActive ? active : idle}`}>
+            <NavLink
+              to="/templates"
+              onClick={() => setOpen(false)}
+              className={({ isActive }) => `${linkBase} ${isActive ? active : idle}`}
+            >
               <Layers size={16} />{" "}
               <span className={collapsed ? "hidden" : ""}>Templates</span>
             </NavLink>
