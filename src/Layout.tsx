@@ -112,11 +112,11 @@ export default function Layout() {
         </button>
       </div>
 
-      <div className="mx-auto flex max-w-7xl">
+      <div className="flex w-full">
         {/* Sidebar */}
-        <aside
-          className={`${open ? "block" : "hidden"} fixed inset-y-0 left-0 z-30 w-72 bg-white border-r border-slate-200 p-4 lg:static lg:block lg:shrink-0`}
-        >
+       <aside
+         className={`${open ? "block" : "hidden"} fixed inset-y-0 left-0 z-30 w-72 bg-white border-r border-slate-200 p-4 lg:block`}
+       >
           <div className="flex items-center gap-2 mb-4">
             <img src="/icon-32.png" alt="AssureOps" className="h-7 w-7" />
             <div className="leading-tight">
@@ -206,7 +206,7 @@ export default function Layout() {
         </aside>
 
         {/* Content */}
-        <main className="flex-1 min-w-0 lg:ml-6 px-4 py-6">
+        <main className="flex-1 min-w-0 px-4 py-6 lg:ml-72">
           <Outlet />
         </main>
       </div>
