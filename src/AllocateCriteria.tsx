@@ -98,13 +98,15 @@ export default function AllocateCriteria() {
     (async () => {
       if (!orgId) return;
       setLoading(true);
-      const { data } = await supabase
+            const { data } = await supabase
         .from("criteria_templates")
         .select("id,title,description,category,severity,default_status,evidence_required,version,is_active,org_id,meta,default_due_offset_days")
-        .eq("is_active", true)
         .order("category", { ascending: true })
         .order("title", { ascending: true });
-      const rows = (data || []).filter((t: any) => !t.org_id || t.org_id === orgId);
+      // Accept both boolean true and string 'true'
+      const rows = (data || [])
+        .filter((t: any) => (t.is_active === true || t.is_active === 'true'))
+        .filter((t: any) => !t.org_id || t.org_id === orgId);
       setTemplates(rows as CriteriaTemplate[]);
       setLoading(false);
     })();
