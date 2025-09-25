@@ -10,10 +10,10 @@ import Layout from "./Layout";
 
 import App from "./App";
 import Dashboard from "./Dashboard";
-import CreateProject from "./CreateProject";
 import ProjectPage from "./ProjectPage";
 import OrgUsers from "./OrgUsers";
 import Templates from "./Templates";
+import AllocateCriteria from "./AllocateCriteria";
 
 
 function Root() {
@@ -24,7 +24,7 @@ function Root() {
           <Route element={<Layout />}>
             <Route path="/" element={<App />} />
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/new" element={<CreateProject />} />
+			<Route path="/allocate" element={<AllocateCriteria />} />
             <Route path="/projects/:id" element={<ProjectPage />} />
             <Route path="/org-users" element={<OrgUsers />} />
             <Route path="/templates" element={<Templates />} />

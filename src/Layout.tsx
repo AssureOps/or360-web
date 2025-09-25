@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useOrg, type Org } from "./OrgContext";
+import { supabase } from "./lib/supabase";
 import {
   Menu, X, Plus,
   ClipboardCheck, PieChart, FileCheck2,
@@ -9,7 +10,8 @@ import {
   Layers, FileArchive,
   ShieldCheck, Settings,
   Bell, Book, History,
-  PanelLeftClose, PanelLeftOpen
+  PanelLeftClose, PanelLeftOpen,
+  ListChecks
 } from "lucide-react";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -85,6 +87,7 @@ function OrgSelectInline() {
 export default function Layout() {
   const nav = useNavigate();
   const location = useLocation();
+  const { orgId } = useOrg();
 
   // Mobile drawer open/close
   const [open, setOpen] = useState(false);
@@ -110,6 +113,40 @@ export default function Layout() {
   const active = "bg-slate-900 text-white";
   const idle = "text-slate-700 hover:text-slate-900 hover:bg-slate-200";
 
+  // Create a stub project and navigate to its edit page
+  async function createProjectAndGo() {
+  if (!orgId) {
+    alert("Select an organisation first.");
+    return;
+  }
+  try {
+    // get current user id for created_by
+    const { data: au } = await supabase.auth.getUser();
+    const uid = au?.user?.id;
+    if (!uid) {
+      alert("You need to be signed in to create a project.");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("projects")
+      .insert({
+        org_id: orgId,
+        name: "Untitled Project",
+        status: "draft",
+        created_by: uid,            // <-- important
+      })
+      .select("id")
+      .single();
+
+    if (error) throw error;
+    setOpen(false); // close mobile drawer if open
+    nav(`/projects/${data!.id}`);
+  } catch (e: any) {
+    alert(`Failed to create project: ${e?.message ?? e}`);
+  }
+}
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       {/* Mobile top bar */}
@@ -128,7 +165,7 @@ export default function Layout() {
           <span className="text-sm font-semibold">AssureOps — OR-360</span>
         </div>
         <button
-          onClick={() => nav("/new")}
+          onClick={createProjectAndGo}
           className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
           title="Create Project"
         >
@@ -168,8 +205,8 @@ export default function Layout() {
             </button>
           </div>
 
-          {/* Workspace */}
-          {!collapsed && <SectionTitle>Workspace</SectionTitle>}
+          {/* Operational Readiness */}
+          {!collapsed && <SectionTitle>Operational Readiness</SectionTitle>}
           <nav className="flex flex-col gap-1">
             <NavLink
               to="/"
@@ -219,6 +256,27 @@ export default function Layout() {
               <FolderKanban size={16} />{" "}
               <span className={collapsed ? "hidden" : ""}>Org Projects</span>
             </NavBtn>
+          </nav>
+
+          {/* Project Management */}
+          {!collapsed && <SectionTitle>Project Management</SectionTitle>}
+          <nav className="flex flex-col gap-1">
+            <button
+              onClick={createProjectAndGo}
+              className={`${linkBase} ${idle}`}
+              title="Create a new project and open it"
+            >
+              <Plus size={16} />{" "}
+              <span className={collapsed ? "hidden" : ""}>Create Project</span>
+            </button>
+            <NavLink
+              to="/allocate"
+              onClick={() => setOpen(false)}
+              className={({ isActive }) => `${linkBase} ${isActive ? active : idle}`}
+            >
+              <ListChecks size={16} />{" "}
+              <span className={collapsed ? "hidden" : ""}>Allocate Criteria</span>
+            </NavLink>
           </nav>
 
           {/* Library */}
@@ -273,10 +331,7 @@ export default function Layout() {
 
           <div className="mt-4">
             <button
-              onClick={() => {
-                setOpen(false);
-                nav("/new");
-              }}
+              onClick={createProjectAndGo}
               className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800"
             >
               <Plus size={16} />{" "}
