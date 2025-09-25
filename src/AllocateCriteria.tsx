@@ -31,9 +31,7 @@ type CriteriaTemplate = {
   default_due_offset_days: number | null;
 };
 
-type CriteriaRow = { id: string; template_id: string | null };
-
-/** Draft row for preview drawer */
+/** Draft row for preview drawer (adds) */
 type DraftRow = {
   template_id: string;
   project_id: string;
@@ -58,31 +56,33 @@ export default function AllocateCriteria() {
   const [templates, setTemplates] = useState<CriteriaTemplate[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [existing, setExisting] = useState<Set<string>>(new Set()); // templates already allocated to project
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [existing, setExisting] = useState<Set<string>>(new Set()); // template_ids already in project
+  const [selectedToAdd, setSelectedToAdd] = useState<Set<string>>(new Set()); // template_ids to ADD
+  const [selectedToRemove, setSelectedToRemove] = useState<Set<string>>(new Set()); // template_ids to REMOVE
 
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [anchor, setAnchor] = useState<"go_live" | "start">("go_live"); // due date anchor
-  const [excludeExisting, setExcludeExisting] = useState<boolean>(true); // NEW: auto-unselect & hide already added
 
-  // Preview drawer
-  const [previewOpen, setPreviewOpen] = useState(false);
+  // Drawers
+  const [addDrawerOpen, setAddDrawerOpen] = useState(false);
+  const [removeDrawerOpen, setRemoveDrawerOpen] = useState(false);
   const [inserting, setInserting] = useState(false);
-  const [draftRows, setDraftRows] = useState<DraftRow[]>([]);
+  const [removing, setRemoving] = useState(false);
+  const [draftRows, setDraftRows] = useState<DraftRow[]>([]); // for add drawer
 
   // Load projects for current org
   useEffect(() => {
     (async () => {
       if (!orgId) return;
       setLoading(true);
-      const { data: projs, error } = await supabase
+      const { data: projs } = await supabase
         .from("projects")
         .select("id, org_id, name, start_date, go_live_date")
         .eq("org_id", orgId)
         .order("created_at", { ascending: false })
         .limit(500);
-      if (!error && projs) {
+      if (projs) {
         setProjects(projs as any);
         const pm: Record<string, Project> = {};
         (projs as any).forEach((p: Project) => (pm[p.id] = p));
@@ -98,43 +98,30 @@ export default function AllocateCriteria() {
     (async () => {
       if (!orgId) return;
       setLoading(true);
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("criteria_templates")
         .select("id,title,description,category,severity,default_status,evidence_required,version,is_active,org_id,meta,default_due_offset_days")
         .eq("is_active", true)
         .order("category", { ascending: true })
         .order("title", { ascending: true });
-      if (error) { setLoading(false); return; }
       const rows = (data || []).filter((t: any) => !t.org_id || t.org_id === orgId);
       setTemplates(rows as CriteriaTemplate[]);
       setLoading(false);
     })();
   }, [orgId]);
 
-  // Load existing criteria for the chosen project to avoid duplicates
-  useEffect(() => {
-    (async () => {
-      if (!projectId) { setExisting(new Set()); return; }
-      const { data, error } = await supabase
-        .from("criteria")
-        .select("id, template_id")
-        .eq("project_id", projectId);
-      if (error) { setExisting(new Set()); return; }
-      const ids = new Set<string>();
-      (data as CriteriaRow[]).forEach(r => { if (r.template_id) ids.add(r.template_id); });
-      setExisting(ids);
-    })();
-  }, [projectId]);
-
-  // Auto-unselect any selected IDs that are already in project (when toggle ON or when 'existing' changes)
-  useEffect(() => {
-    if (!excludeExisting) return;
-    setSelected(prev => {
-      const next = new Set<string>();
-      for (const id of prev) if (!existing.has(id)) next.add(id);
-      return next;
-    });
-  }, [excludeExisting, existing]);
+  // Refresh existing template_ids for the chosen project
+  async function refreshExisting() {
+    if (!projectId) { setExisting(new Set()); return; }
+    const { data } = await supabase
+      .from("criteria")
+      .select("template_id")
+      .eq("project_id", projectId);
+    const ids = new Set<string>();
+    (data || []).forEach((r: any) => { if (r.template_id) ids.add(r.template_id); });
+    setExisting(ids);
+  }
+  useEffect(() => { refreshExisting(); }, [projectId]);
 
   // Filters
   const categories = useMemo(() => {
@@ -142,10 +129,10 @@ export default function AllocateCriteria() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [templates]);
 
+  // Always show everything (user can select either add or remove)
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return templates.filter(t => {
-      if (excludeExisting && existing.has(t.id)) return false;
       if (categoryFilter !== "all") {
         const cat = (t.category || "Uncategorised").toLowerCase();
         if (cat !== categoryFilter.toLowerCase()) return false;
@@ -154,7 +141,7 @@ export default function AllocateCriteria() {
       const hay = [t.title, t.description || "", t.category || "", t.severity].join(" ").toLowerCase();
       return hay.includes(q);
     });
-  }, [templates, search, categoryFilter, excludeExisting, existing]);
+  }, [templates, search, categoryFilter]);
 
   // Group by category
   const grouped = useMemo(() => {
@@ -166,29 +153,41 @@ export default function AllocateCriteria() {
     return map;
   }, [filtered]);
 
-  function toggle(id: string) {
-    if (existing.has(id)) return; // safety
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  // Checkbox logic:
+  // - If template is NOT existing: toggles add
+  // - If template IS existing: toggles remove
+  function toggleForTemplate(id: string) {
+    if (existing.has(id)) {
+      setSelectedToRemove(prev => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    } else {
+      setSelectedToAdd(prev => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+    }
   }
 
-  function selectAllVisible() {
-    const next = new Set<string>(selected);
-    for (const t of filtered) {
-      if (!existing.has(t.id)) next.add(t.id);
-    }
-    setSelected(next);
+  function selectAllVisibleToAdd() {
+    const next = new Set<string>(selectedToAdd);
+    for (const t of filtered) if (!existing.has(t.id)) next.add(t.id);
+    setSelectedToAdd(next);
   }
-  function clearSelection() {
-    setSelected(new Set());
+  function clearAddSelection() {
+    setSelectedToAdd(new Set());
+  }
+  function clearRemoveSelection() {
+    setSelectedToRemove(new Set());
   }
 
   function computeDueDate(t: CriteriaTemplate, p: Project | undefined) {
-    const offset = t.default_due_offset_days ?? null; // from schema (days before the anchor) :contentReference[oaicite:3]{index=3}
+    const offset = t.default_due_offset_days ?? null; // days BEFORE anchor
     if (!p || offset === null) return null;
     const baseStr = anchor === "go_live" ? p.go_live_date : p.start_date;
     if (!baseStr) return null;
@@ -197,13 +196,13 @@ export default function AllocateCriteria() {
     return base.toISOString().slice(0, 10);
   }
 
-  // Build draft rows for preview based on current selection
+  // Build draft rows for add preview
   function buildDraftRows(): DraftRow[] {
     if (!projectId || !orgId) return [];
     const p = projectMap[projectId];
     const nowIso = new Date().toISOString();
     return templates
-      .filter(t => selected.has(t.id) && !existing.has(t.id))
+      .filter(t => selectedToAdd.has(t.id) && !existing.has(t.id))
       .map(t => ({
         template_id: t.id,
         project_id: projectId,
@@ -220,10 +219,10 @@ export default function AllocateCriteria() {
       }));
   }
 
-  function openPreview() {
+  function openAddDrawer() {
     const rows = buildDraftRows();
     setDraftRows(rows);
-    setPreviewOpen(true);
+    setAddDrawerOpen(true);
   }
 
   async function confirmInsert() {
@@ -233,19 +232,10 @@ export default function AllocateCriteria() {
       const { error } = await supabase.from("criteria").insert(draftRows);
       if (error) throw error;
 
-      // refresh existing → auto-clears selection (when excludeExisting = true)
-      const { data } = await supabase
-        .from("criteria")
-        .select("template_id")
-        .eq("project_id", projectId);
-      const ids = new Set<string>();
-      (data || []).forEach((r: any) => { if (r.template_id) ids.add(r.template_id); });
-      setExisting(ids);
-
-      setPreviewOpen(false);
+      await refreshExisting();
+      setAddDrawerOpen(false);
       setDraftRows([]);
-      setSelected(new Set());
-      alert(`Added ${draftRows.length} item(s) to the project.`);
+      setSelectedToAdd(new Set());
     } catch (e: any) {
       alert("Failed to add criteria: " + (e?.message ?? e));
     } finally {
@@ -253,8 +243,41 @@ export default function AllocateCriteria() {
     }
   }
 
-  const selectedCount = selected.size;
-  const remainingCount = filtered.filter(t => !existing.has(t.id)).length;
+  // Remove drawer helpers
+  const removeList = useMemo(() => {
+    const byId: Record<string, CriteriaTemplate> = {};
+    templates.forEach(t => byId[t.id] = t);
+    return Array.from(selectedToRemove).map(id => byId[id]).filter(Boolean);
+  }, [selectedToRemove, templates]);
+
+  function openRemoveDrawer() {
+    setRemoveDrawerOpen(true);
+  }
+
+  async function confirmRemove() {
+    if (!projectId || selectedToRemove.size === 0) return;
+    setRemoving(true);
+    try {
+      const { error } = await supabase
+        .from("criteria")
+        .delete()
+        .eq("project_id", projectId)
+        .in("template_id", Array.from(selectedToRemove));
+      if (error) throw error;
+
+      await refreshExisting();
+      setSelectedToRemove(new Set());
+      setRemoveDrawerOpen(false);
+    } catch (e: any) {
+      alert("Failed to remove: " + (e?.message ?? e));
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  const addCount = selectedToAdd.size;
+  const removeCount = selectedToRemove.size;
+  const remainingAddCount = filtered.filter(t => !existing.has(t.id)).length;
 
   return (
     <div className="p-6 space-y-6">
@@ -262,7 +285,7 @@ export default function AllocateCriteria() {
         <div>
           <h1 className="text-xl font-semibold">Allocate Criteria</h1>
           <p className="text-sm text-slate-600">
-            Choose service acceptance criteria from predefined templates (global or your org) and add them to a project.
+            Tick items to <b>add</b> if not present, or to <b>remove</b> if already added. Review before confirming.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -309,43 +332,51 @@ export default function AllocateCriteria() {
               value={anchor}
               onChange={(e) => setAnchor(e.target.value as any)}
             >
-              <option value="go_live">Go‑Live − offset</option>
+              <option value="go_live">Go-Live − offset</option>
               <option value="start">Start − offset</option>
             </select>
           </div>
 
-          {/* NEW: auto-unselect + hide already-added */}
-          <label className="ml-2 inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs">
-            <input
-              type="checkbox"
-              checked={excludeExisting}
-              onChange={(e) => setExcludeExisting(e.target.checked)}
-            />
-            Exclude items already in project
-          </label>
-
           <div className="ml-auto flex items-center gap-2">
+            {/* Add actions */}
             <button
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              onClick={selectAllVisible}
-              disabled={remainingCount === 0}
+              onClick={selectAllVisibleToAdd}
+              disabled={remainingAddCount === 0}
+              title="Select all visible items that are not already in the project"
             >
-              Select all ({remainingCount})
+              Select all ({remainingAddCount})
             </button>
             <button
               className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              onClick={clearSelection}
-              disabled={selectedCount === 0}
+              onClick={clearAddSelection}
+              disabled={addCount === 0}
             >
-              Clear selection
+              Clear adds
             </button>
             <button
               className="btn btn-primary"
-              onClick={openPreview}
-              disabled={!projectId || selectedCount === 0}
+              onClick={openAddDrawer}
+              disabled={!projectId || addCount === 0}
               title={!projectId ? "Choose a project first" : ""}
             >
-              Review &amp; Add ({selectedCount})
+              Review &amp; Add ({addCount})
+            </button>
+
+            {/* Remove actions */}
+            <button
+              className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              onClick={clearRemoveSelection}
+              disabled={removeCount === 0}
+            >
+              Clear removals
+            </button>
+            <button
+              className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 disabled:opacity-50"
+              onClick={openRemoveDrawer}
+              disabled={!projectId || removeCount === 0}
+            >
+              Review &amp; Remove ({removeCount})
             </button>
           </div>
         </div>
@@ -359,8 +390,9 @@ export default function AllocateCriteria() {
             title={cat}
             items={grouped[cat]}
             existing={existing}
-            selected={selected}
-            onToggle={toggle}
+            selectedToAdd={selectedToAdd}
+            selectedToRemove={selectedToRemove}
+            onToggle={toggleForTemplate}
           />
         ))}
 
@@ -371,22 +403,22 @@ export default function AllocateCriteria() {
       </section>
 
       {/* Review & Add Drawer */}
-      {previewOpen && (
+      {addDrawerOpen && (
         <>
-          <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setPreviewOpen(false)} />
+          <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setAddDrawerOpen(false)} />
           <div className="fixed inset-y-0 right-0 z-50 w-full max-w-xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
               <div className="flex items-center gap-2">
                 <ListChecks size={18} />
                 <div className="text-sm font-semibold">Review &amp; Add</div>
               </div>
-              <button className="rounded-md p-1 hover:bg-slate-100" onClick={() => setPreviewOpen(false)} aria-label="Close">
+              <button className="rounded-md p-1 hover:bg-slate-100" onClick={() => setAddDrawerOpen(false)} aria-label="Close">
                 <X size={18} />
               </button>
             </div>
 
             <div className="px-4 py-3 text-sm text-slate-600">
-              {draftRows.length} item(s) will be added to the selected project. You can adjust the due dates and evidence flags before confirming.
+              {draftRows.length} item(s) will be added. Adjust due dates and evidence flags if needed.
             </div>
 
             <div className="grid max-h-[70vh] gap-3 overflow-y-auto px-4 pb-20">
@@ -409,7 +441,7 @@ export default function AllocateCriteria() {
                       className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-red-700 hover:bg-rose-50"
                       onClick={() => {
                         setDraftRows((prev) => prev.filter((r) => r.template_id !== row.template_id));
-                        setSelected((prev) => {
+                        setSelectedToAdd((prev) => {
                           const next = new Set(prev);
                           next.delete(row.template_id);
                           return next;
@@ -457,7 +489,7 @@ export default function AllocateCriteria() {
               <div className="flex items-center justify-between">
                 <div className="text-sm text-slate-600">{draftRows.length} item(s) ready</div>
                 <div className="flex items-center gap-2">
-                  <button className="rounded-md border border-slate-300 px-3 py-2 text-sm" onClick={() => setPreviewOpen(false)}>
+                  <button className="rounded-md border border-slate-300 px-3 py-2 text-sm" onClick={() => setAddDrawerOpen(false)}>
                     Cancel
                   </button>
                   <button
@@ -473,6 +505,82 @@ export default function AllocateCriteria() {
           </div>
         </>
       )}
+
+      {/* Review & Remove Drawer */}
+      {removeDrawerOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setRemoveDrawerOpen(false)} />
+        <div className="fixed inset-y-0 right-0 z-50 w-full max-w-xl bg-white shadow-2xl">
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Trash2 size={18} />
+              <div className="text-sm font-semibold">Review &amp; Remove</div>
+            </div>
+            <button className="rounded-md p-1 hover:bg-slate-100" onClick={() => setRemoveDrawerOpen(false)} aria-label="Close">
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="px-4 py-3 text-sm text-slate-600">
+            {removeList.length} item(s) will be removed from this project.
+          </div>
+
+          <div className="grid max-h-[70vh] gap-3 overflow-y-auto px-4 pb-20">
+            {removeList.length === 0 && (
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-center text-slate-600">
+                Nothing selected for removal.
+              </div>
+            )}
+
+            {removeList.map((t) => (
+              <div key={t.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium">{t.title}</div>
+                    <div className="mt-0.5 text-xs text-slate-600">
+                      {(t.category ?? "Uncategorised")} · {String(t.severity || "med").toUpperCase()}
+                    </div>
+                    {t.description && (
+                      <div className="mt-1 text-sm text-slate-700 line-clamp-3">{t.description}</div>
+                    )}
+                  </div>
+                  <button
+                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                    onClick={() => {
+                      setSelectedToRemove((prev) => {
+                        const next = new Set(prev);
+                        next.delete(t.id);
+                        return next;
+                      });
+                    }}
+                  >
+                    <X size={12} /> Keep
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="fixed bottom-0 right-0 z-50 w-full max-w-xl border-t border-slate-200 bg-white px-4 py-3">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-slate-600">{removeList.length} item(s) ready</div>
+              <div className="flex items-center gap-2">
+                <button className="rounded-md border border-slate-300 px-3 py-2 text-sm" onClick={() => setRemoveDrawerOpen(false)}>
+                  Cancel
+                </button>
+                <button
+                  className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 disabled:opacity-50"
+                  onClick={confirmRemove}
+                  disabled={removeList.length === 0 || removing}
+                >
+                  {removing ? "Removing…" : `Confirm & Remove (${removeList.length})`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        </>
+      )}
     </div>
   );
 }
@@ -481,13 +589,15 @@ function CategoryBlock({
   title,
   items,
   existing,
-  selected,
+  selectedToAdd,
+  selectedToRemove,
   onToggle
 }: {
   title: string;
   items: CriteriaTemplate[];
   existing: Set<string>;
-  selected: Set<string>;
+  selectedToAdd: Set<string>;
+  selectedToRemove: Set<string>;
   onToggle: (id: string) => void;
 }) {
   const [open, setOpen] = useState(true);
@@ -508,14 +618,14 @@ function CategoryBlock({
         <div className="divide-y divide-slate-100">
           {items.map(t => {
             const isExisting = existing.has(t.id);
-            const isChecked = selected.has(t.id);
+            const isChecked = isExisting ? selectedToRemove.has(t.id) : selectedToAdd.has(t.id);
+
             return (
               <div key={t.id} className="flex items-start gap-3 px-4 py-3">
                 <input
                   type="checkbox"
                   className="mt-1 h-4 w-4 rounded border-slate-300"
                   checked={isChecked}
-                  disabled={isExisting}
                   onChange={() => onToggle(t.id)}
                 />
                 <div className="min-w-0 flex-1">
@@ -529,7 +639,7 @@ function CategoryBlock({
                         <CheckCircle2 size={12}/> Already added
                       </span>
                     )}
-                    {t.default_due_offset_days != null && (
+                    {!isExisting && t.default_due_offset_days != null && (
                       <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700" title="Default due date is anchored to the selected anchor minus this offset">
                         −{t.default_due_offset_days} days
                       </span>
