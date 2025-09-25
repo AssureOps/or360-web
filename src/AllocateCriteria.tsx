@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { useOrg } from "./OrgContext";
 import {
-  ListChecks, Filter, CheckCircle2, Plus,
+  ListChecks, Filter, CheckCircle2,
   ChevronDown, ChevronRight, X, CalendarDays, Trash2
 } from "lucide-react";
 
