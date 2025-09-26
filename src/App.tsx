@@ -4,6 +4,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { generateCertificate } from "./lib/certificate";
 import { Link } from "react-router-dom";
 import CriteriaCard, { type CriteriaStatus } from "./components/CriteriaCard";
+import ConfirmDialog from "./components/ConfirmDialog";
 
 /** Types (unchanged) **/
 export type Criterion = {
@@ -18,6 +19,7 @@ export type Criterion = {
   due_date?: string | null;
   caveat_reason?: string | null;
   meta?: any;
+  description?: string | null;
 };
 
 export type Note = {
@@ -30,6 +32,10 @@ export type Note = {
   created_by?: string | null;
   updated_at?: string | null;
   meta?: any;
+  // DB columns we may read for files (not always present in earlier rows)
+  file_path?: string | null;
+  mime_type?: string | null;
+  size_bytes?: number | null;
 };
 
 export type Project = {
@@ -68,6 +74,32 @@ export default function App() {
 
   const [search, setSearch] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({}); // categories collapsed by default
+
+  // --- Add Link Modal state (plain text; no http formatting/validation) ---
+  const [linkForId, setLinkForId] = useState<string | null>(null);
+  const [linkURL, setLinkURL] = useState("");
+  const [linkErr, setLinkErr] = useState<string | null>(null);
+
+  function openLinkModal(criterionId: string) {
+    setLinkForId(criterionId);
+    setLinkURL("");
+    setLinkErr(null);
+  }
+  function closeLinkModal() {
+    setLinkForId(null);
+    setLinkURL("");
+    setLinkErr(null);
+  }
+  async function confirmAddLink() {
+    const v = linkURL.trim();
+    if (!v) {
+      setLinkErr("Please enter a URL or reference.");
+      return;
+    }
+    if (!linkForId) return;
+    await addLink(linkForId, v);
+    closeLinkModal();
+  }
 
   // Auto sign-in (demo creds) + load projects
   useEffect(() => {
@@ -111,12 +143,12 @@ export default function App() {
     setErr(null);
     (async () => {
       const { data: crits, error } = await supabase
-  .from("criteria")
-  .select(
-    "id,project_id,title,status,category,description,meta,owner_email,due_date,caveat_reason,created_at,updated_at"
-  )
-  .eq("project_id", activeProjectId)
-  .order("title", { ascending: true });
+        .from("criteria")
+        .select(
+          "id,project_id,title,status,category,description,meta,owner_email,due_date,caveat_reason,created_at,updated_at"
+        )
+        .eq("project_id", activeProjectId)
+        .order("title", { ascending: true });
       if (error) {
         setErr(error.message);
         setLoading(false);
@@ -129,11 +161,11 @@ export default function App() {
         const { data: ev, error: evErr } = await supabase
           .from("evidence")
           .select(
-            "id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta"
+            "id,criterion_id,kind,note,url,file_path,mime_type,size_bytes,uploaded_at,created_by,updated_at,meta"
           )
           .in("criterion_id", ids);
         if (evErr) setErr(evErr.message);
-        setNotes(ev ?? []);
+        setNotes((ev ?? []) as Note[]);
       } else {
         setNotes([]);
       }
@@ -150,6 +182,7 @@ export default function App() {
       const hay = [
         c.title,
         c.category ?? "",
+        c.description ?? "",
         c.meta?.description ?? "",
         ...(c.meta?.prompts ?? []),
       ]
@@ -227,7 +260,7 @@ export default function App() {
         note: `Status changed to: ${label}`,
         uploaded_at: new Date().toISOString(),
         created_by: currentUserEmail ?? "Unknown",
-      },
+      } as Note,
       ...prev,
     ]);
   }
@@ -256,23 +289,31 @@ export default function App() {
 
   async function uploadFile(criterionId: string, file: File) {
     const path = `${criterionId}/${Date.now()}-${file.name}`;
+    // 1) Upload to storage
     const { error } = await supabase.storage.from("evidence").upload(path, file);
     if (error) {
       alert("Upload failed: " + error.message);
       return;
     }
+    // 2) Optionally generate a public URL for convenience (adjust if private)
     const { data: pub } = supabase.storage.from("evidence").getPublicUrl(path);
+    const publicUrl = pub?.publicUrl || null;
+
+    // 3) Insert evidence row using DB columns (file_path, mime_type, size_bytes)
     const { data: fileRow, error: insErr } = await supabase
       .from("evidence")
       .insert({
         criterion_id: criterionId,
         kind: "file",
-        url: pub.publicUrl,
+        file_path: path,
+        url: publicUrl, // convenience for quick open; remove if bucket is private
+        mime_type: file.type || null,
+        size_bytes: file.size ?? null,
         created_by: currentUserEmail,
         meta: { storage_path: path },
       })
       .select(
-        "id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta"
+        "id,criterion_id,kind,note,url,file_path,mime_type,size_bytes,uploaded_at,created_by,updated_at,meta"
       )
       .single();
     if (insErr) {
@@ -280,7 +321,8 @@ export default function App() {
       return;
     }
     setNotes((prev) => [fileRow as Note, ...prev]);
-    // Cover note
+
+    // 4) Optional note
     try {
       const noteText = `File uploaded: ${file.name}`;
       const { data: noteRow } = await supabase
@@ -299,50 +341,54 @@ export default function App() {
     } catch {}
   }
 
-  // Owner & due date updaters for CriteriaCard
-  async function updateOwner(criterionId: string, newEmail: string) {
-    const v = newEmail || null;
-    const prev = criteria?.find((x) => x.id === criterionId)?.owner_email ?? null;
-    const { error } = await supabase.from("criteria").update({ owner_email: v }).eq("id", criterionId);
-    if (!error) {
-      setCriteria((prevList) =>
-        prevList?.map((c) => (c.id === criterionId ? { ...c, owner_email: v ?? undefined } : c)) ?? prevList
-      );
-      const msg = v
-        ? prev
-          ? `Owner changed from ${prev} to ${v}`
-          : `Owner set to ${v}`
-        : prev
-        ? `Owner cleared (was ${prev})`
-        : `Owner cleared`;
-      await addNote(criterionId, msg);
-    } else {
+  async function addLink(criterionId: string, url: string) {
+    const v = url.trim();
+    if (!v) return;
+    const { data, error } = await supabase
+      .from("evidence")
+      .insert({
+        criterion_id: criterionId,
+        kind: "link",
+        url: v,
+        created_by: currentUserEmail,
+      })
+      .select(
+        "id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta"
+      )
+      .single();
+    if (error) {
       setErr(error.message);
+      return;
+    }
+    setNotes((prev) => [data as Note, ...prev]);
+  }
+
+  // NEW: Delete evidence (files & links only — notes are protected)
+  async function deleteEvidence(evidenceId: string) {
+    try {
+      const row = notes.find((n) => n.id === evidenceId);
+      if (!row) return;
+      if (row.kind === "note") {
+        alert("Activity notes cannot be deleted.");
+        return;
+      }
+      // If it's a file, delete from storage first (best-effort)
+      if (row.kind === "file" && row.file_path) {
+        try {
+          await supabase.storage.from("evidence").remove([row.file_path]);
+        } catch {}
+      }
+      // Delete DB row
+      const { error } = await supabase.from("evidence").delete().eq("id", evidenceId);
+      if (error) throw error;
+      // Update UI
+      setNotes((prev) => prev.filter((n) => n.id !== evidenceId));
+    } catch (e: any) {
+      setErr(e?.message ?? String(e));
     }
   }
 
-  async function updateDueDate(criterionId: string, newISO: string | null) {
-    const v = newISO || null;
-    const prev = criteria?.find((x) => x.id === criterionId)?.due_date ?? null;
-    const { error } = await supabase.from("criteria").update({ due_date: v }).eq("id", criterionId);
-    if (!error) {
-      setCriteria((prevList) =>
-        prevList?.map((c) => (c.id === criterionId ? { ...c, due_date: v ?? undefined } : c)) ?? prevList
-      );
-      const msg = v
-        ? prev
-          ? `Due date changed from ${prev} to ${v}`
-          : `Due date set to ${v}`
-        : prev
-        ? `Due date cleared (was ${prev})`
-        : `Due date cleared`;
-      await addNote(criterionId, msg);
-    } else {
-      setErr(error.message);
-    }
-  }
-
-  // Evidence prompt (opens a native file picker and uses existing upload flow)
+  // Evidence prompt (opens native picker and uses upload flow)
   function promptEvidenceUpload(criterionId: string) {
     const input = document.createElement("input");
     input.type = "file";
@@ -353,6 +399,22 @@ export default function App() {
     input.click();
   }
 
+
+const [delEv, setDelEv] = useState<{ id: string; name: string } | null>(null);
+
+function openDeleteModal(opts: { id: string; name: string }) {
+  setDelEv(opts);
+}
+function closeDeleteModal() {
+  setDelEv(null);
+}
+
+async function confirmDeleteEvidence() {
+  if (!delEv) return;
+  await deleteEvidence(delEv.id);   // your existing deleter (files/links only)
+  setDelEv(null);
+}
+  // Derived UI render
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -377,15 +439,7 @@ export default function App() {
             </select>
           </div>
 
-          {activeProjectId && (
-            <Link
-              to={`/projects/${activeProjectId}`}
-              className="hidden items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm hover:bg-slate-100 sm:inline-flex"
-              title="Open project details"
-            >
-              Edit project
-            </Link>
-          )}
+          {/* REMOVED header "Edit project" button per request */}
         </div>
 
         {/* Project selector for mobile */}
@@ -547,23 +601,29 @@ export default function App() {
                         created_at: n.uploaded_at,
                         created_by: n.created_by ?? "Unknown",
                       }));
-                    const evidence = critNotes
+                    // Build evidence list and tag files vs links for the card
+                    const evItems = critNotes
                       .filter((n) => n.kind !== "note")
-                      .map((ev) => ({
-                        id: ev.id,
-                        name:
-                          ev.kind === "file"
-                            ? (ev.url ?? "").split("/").pop() || "file"
-                            : ev.url ?? "link",
-                        url: ev.url ?? undefined,
-                        created_at: ev.uploaded_at,
-                        created_by: ev.created_by ?? "Unknown",
-                      }));
+                      .map((ev) => {
+                        const isFile = ev.kind === "file";
+                        const name =
+                          (ev.file_path ?? "").split("/").pop() ||
+                          (ev.url ?? "").split("/").pop() ||
+                          (isFile ? "file" : ev.url ?? "link");
+                        return {
+                          id: ev.id,
+                          name,
+                          url: ev.url ?? undefined, // may be null for private buckets
+                          file: isFile,
+                          created_at: ev.uploaded_at,
+                          created_by: ev.created_by ?? "Unknown",
+                        };
+                      });
 
                     // Last action for narrative footer
                     const last = [...critNotes].sort(
                       (a, b) =>
-                        +new Date(b.uploaded_at) - +new Date(a.uploaded_at)
+                        +new Date(a.uploaded_at) < +new Date(b.uploaded_at) ? 1 : -1
                     )[0];
                     const last_action = last
                       ? {
@@ -571,36 +631,43 @@ export default function App() {
                           summary:
                             last.kind === "note"
                               ? last.note ?? ""
-                              : last.url ?? "",
+                              : last.url ?? (last as any).file_path ?? "",
                           at: last.uploaded_at,
                           by: last.created_by ?? "Unknown",
                         }
                       : null;
 
                     return (
-                <CriteriaCard
-  key={c.id}
-  item={{
-    id: c.id,
-    title: c.title,
-    description: (c as any).description ?? c.meta?.description ?? "",   // 👈 updated
-    category: c.category ?? "",
-    severity: c.meta?.severity ?? "",
-    status: c.status as CriteriaStatus,
-    owner_email: c.owner_email ?? "",
-    due_date: c.due_date ?? "",
-    last_action,
-  }}
-  activities={activities}
-  evidence={evidence}
-  onChangeStatus={(next) =>
-    handleUpdateStatus(c.id, next as CriteriaStatus)
-  }
-  onChangeOwner={(email) => updateOwner(c.id, email)}
-  onChangeDueDate={(dateISO) => updateDueDate(c.id, dateISO)}
-  onAddNote={(text) => addNote(c.id, text)}
-  onAddEvidence={() => promptEvidenceUpload(c.id)}
-/>
+                      <CriteriaCard
+                        key={c.id}
+                        item={{
+                          id: c.id,
+                          title: c.title,
+                          description: (c as any).description ?? c.meta?.description ?? "",
+                          category: c.category ?? "",
+                          severity: c.meta?.severity ?? "",
+                          status: c.status as CriteriaStatus,
+                          owner_email: c.owner_email ?? "",
+                          due_date: c.due_date ?? "",
+                          last_action,
+                        }}
+                        activities={activities}
+                        evidence={evItems as any}
+                        onChangeStatus={(next) =>
+                          handleUpdateStatus(c.id, next as CriteriaStatus)
+                        }
+                        onChangeOwner={(email) => updateOwner(c.id, email)}
+                        onChangeDueDate={(dateISO) =>
+                          updateDueDate(c.id, dateISO)
+                        }
+                        onAddNote={(text) => addNote(c.id, text)}
+                         onAddEvidenceFile={() => promptEvidenceUpload(c.id)}
+  onAddEvidenceLink={() => openLinkModal(c.id)}
+  onRequestDeleteEvidence={(opts: { id: string; name: string }) => openDeleteModal(opts)}
+
+                        // NOTE: wire a delete control in CriteriaCard to call this:
+                        // onDeleteEvidence={(evidenceId) => deleteEvidence(evidenceId)}
+                      />
                     );
                   })}
                 </div>
@@ -609,6 +676,70 @@ export default function App() {
           );
         })}
       </div>
+
+      {/* Add Link modal (reuses ConfirmDialog) */}
+      <ConfirmDialog
+        open={!!linkForId}
+        title="Add a link as evidence"
+        message={
+          <div className="space-y-2">
+            <label className="block text-xs text-slate-600">URL</label>
+            <input
+              type="text" // plain text per request
+              placeholder="Paste URL or reference"
+              value={linkURL}
+              onChange={(e) => {
+                setLinkURL(e.target.value);
+                setLinkErr(null);
+              }}
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            />
+            {linkErr && <div className="text-xs text-rose-600">{linkErr}</div>}
+            <p className="text-xs text-slate-500">
+              This will save a new row to <code>evidence</code> with{" "}
+              <code>kind="link"</code>.
+            </p>
+          </div>
+        }
+        confirmLabel="Add link"
+        cancelLabel="Cancel"
+        destructive={false}
+        onConfirm={confirmAddLink}
+        onCancel={closeLinkModal}
+      />
+	  
+	  <ConfirmDialog
+  open={!!delEv}
+  title="Delete evidence?"
+  message={
+    <div className="space-y-1">
+      <div>This will remove the selected evidence from this criterion.</div>
+      <div className="text-xs text-slate-500">{delEv?.name}</div>
+    </div>
+  }
+  confirmLabel="Delete"
+  cancelLabel="Cancel"
+  destructive
+  onConfirm={confirmDeleteEvidence}
+  onCancel={closeDeleteModal}
+/>
     </div>
   );
+}
+
+// Owner & due date updaters for CriteriaCard
+async function updateOwner(criterionId: string, newEmail: string) {
+  const v = newEmail || null;
+  const { error } = await supabase.from("criteria").update({ owner_email: v }).eq("id", criterionId);
+  if (error) {
+    return;
+  }
+}
+
+async function updateDueDate(criterionId: string, newISO: string | null) {
+  const v = newISO || null;
+  const { error } = await supabase.from("criteria").update({ due_date: v }).eq("id", criterionId);
+  if (error) {
+    return;
+  }
 }
