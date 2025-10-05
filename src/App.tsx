@@ -90,6 +90,11 @@ export default function App() {
     setLinkURL("");
     setLinkErr(null);
   }
+  
+  function rememberLastProject(id: string) {
+  localStorage.setItem("lastProjectId", id);
+  window.dispatchEvent(new CustomEvent("last-project-changed", { detail: id }));
+}
   async function confirmAddLink() {
     const v = linkURL.trim();
     if (!v) {
@@ -131,7 +136,7 @@ export default function App() {
         return;
       }
       setProjects(data ?? []);
-      if (!activeProjectId && data && data.length > 0) setActiveProjectId(data[0].id);
+      if (!activeProjectId && data && data.length > 0) setActiveProjectId(data[0].id);  rememberLastProject(data[0].id);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -509,12 +514,15 @@ async function confirmDeleteEvidence() {
                 Generate Certificate
               </button>
 
-              <Link
-                to="/dashboard"
-                className="rounded-md border border-slate-200 bg-white px-3 py-1 text-sm hover:bg-slate-100"
-              >
-                View Dashboard
-              </Link>
+            {activeProjectId && (
+  <Link
+    to={`/projects/${activeProjectId}/dashboard`}   // ✅ project-scoped
+    className="rounded-md border border-slate-200 bg-white px-3 py-1 text-sm hover:bg-slate-100"
+  >
+    View Dashboard
+  </Link>
+)}
+
             </div>
           </div>
         )}
