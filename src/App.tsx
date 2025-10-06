@@ -3,10 +3,12 @@ import { supabase } from "./lib/supabase";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { generateCertificate } from "./lib/certificate";
 import { Link } from "react-router-dom";
+
 import CriteriaCard, { type CriteriaStatus } from "./components/CriteriaCard";
+import CriteriaRow from "./components/CriteriaRow";
 import ConfirmDialog from "./components/ConfirmDialog";
 
-/** Types (unchanged) **/
+/** Types **/
 export type Criterion = {
   id: string;
   project_id: string;
@@ -32,7 +34,6 @@ export type Note = {
   created_by?: string | null;
   updated_at?: string | null;
   meta?: any;
-  // DB columns we may read for files (not always present in earlier rows)
   file_path?: string | null;
   mime_type?: string | null;
   size_bytes?: number | null;
@@ -55,7 +56,7 @@ function EmptyState({ message }: { message: string }) {
 }
 
 export default function App() {
-  // Expose supabase in dev console to check which DB we’re hitting
+  // Expose supabase in dev console
   useEffect(() => {
     (window as any).__sb = supabase;
   }, []);
@@ -73,12 +74,16 @@ export default function App() {
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({}); // categories collapsed by default
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({}); // category collapse
+  const [compactView, setCompactView] = useState(true); // Compact vs Detailed
 
-  // --- Add Link Modal state (plain text; no http formatting/validation) ---
+  // Add Link modal
   const [linkForId, setLinkForId] = useState<string | null>(null);
   const [linkURL, setLinkURL] = useState("");
   const [linkErr, setLinkErr] = useState<string | null>(null);
+
+  // Delete Evidence modal
+  const [delEv, setDelEv] = useState<{ id: string; name: string } | null>(null);
 
   function openLinkModal(criterionId: string) {
     setLinkForId(criterionId);
@@ -90,11 +95,6 @@ export default function App() {
     setLinkURL("");
     setLinkErr(null);
   }
-  
-  function rememberLastProject(id: string) {
-  localStorage.setItem("lastProjectId", id);
-  window.dispatchEvent(new CustomEvent("last-project-changed", { detail: id }));
-}
   async function confirmAddLink() {
     const v = linkURL.trim();
     if (!v) {
@@ -105,6 +105,26 @@ export default function App() {
     await addLink(linkForId, v);
     closeLinkModal();
   }
+
+  function openDeleteModal(opts: { id: string; name: string }) {
+    setDelEv(opts);
+  }
+  function closeDeleteModal() {
+    setDelEv(null);
+  }
+  async function confirmDeleteEvidence() {
+    if (!delEv) return;
+    await deleteEvidence(delEv.id);
+    setDelEv(null);
+  }
+
+  // Persist last project id for nav
+  useEffect(() => {
+    if (activeProjectId) {
+      localStorage.setItem("lastProjectId", activeProjectId);
+      window.dispatchEvent(new CustomEvent("last-project-changed", { detail: activeProjectId }));
+    }
+  }, [activeProjectId]);
 
   // Auto sign-in (demo creds) + load projects
   useEffect(() => {
@@ -136,7 +156,7 @@ export default function App() {
         return;
       }
       setProjects(data ?? []);
-      if (!activeProjectId && data && data.length > 0) setActiveProjectId(data[0].id);  rememberLastProject(data[0].id);
+      if (!activeProjectId && data && data.length > 0) setActiveProjectId(data[0].id);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -300,18 +320,18 @@ export default function App() {
       alert("Upload failed: " + error.message);
       return;
     }
-    // 2) Optionally generate a public URL for convenience (adjust if private)
+    // 2) Optional public URL (keep if your bucket is public)
     const { data: pub } = supabase.storage.from("evidence").getPublicUrl(path);
     const publicUrl = pub?.publicUrl || null;
 
-    // 3) Insert evidence row using DB columns (file_path, mime_type, size_bytes)
+    // 3) Insert evidence row
     const { data: fileRow, error: insErr } = await supabase
       .from("evidence")
       .insert({
         criterion_id: criterionId,
         kind: "file",
         file_path: path,
-        url: publicUrl, // convenience for quick open; remove if bucket is private
+        url: publicUrl,
         mime_type: file.type || null,
         size_bytes: file.size ?? null,
         created_by: currentUserEmail,
@@ -368,7 +388,7 @@ export default function App() {
     setNotes((prev) => [data as Note, ...prev]);
   }
 
-  // NEW: Delete evidence (files & links only — notes are protected)
+  // Delete evidence (files & links only — notes are protected)
   async function deleteEvidence(evidenceId: string) {
     try {
       const row = notes.find((n) => n.id === evidenceId);
@@ -377,23 +397,21 @@ export default function App() {
         alert("Activity notes cannot be deleted.");
         return;
       }
-      // If it's a file, delete from storage first (best-effort)
+      // If file, try to remove storage object
       if (row.kind === "file" && row.file_path) {
         try {
           await supabase.storage.from("evidence").remove([row.file_path]);
         } catch {}
       }
-      // Delete DB row
       const { error } = await supabase.from("evidence").delete().eq("id", evidenceId);
       if (error) throw error;
-      // Update UI
       setNotes((prev) => prev.filter((n) => n.id !== evidenceId));
     } catch (e: any) {
       setErr(e?.message ?? String(e));
     }
   }
 
-  // Evidence prompt (opens native picker and uses upload flow)
+  // Evidence prompt (native file picker)
   function promptEvidenceUpload(criterionId: string) {
     const input = document.createElement("input");
     input.type = "file";
@@ -404,22 +422,6 @@ export default function App() {
     input.click();
   }
 
-
-const [delEv, setDelEv] = useState<{ id: string; name: string } | null>(null);
-
-function openDeleteModal(opts: { id: string; name: string }) {
-  setDelEv(opts);
-}
-function closeDeleteModal() {
-  setDelEv(null);
-}
-
-async function confirmDeleteEvidence() {
-  if (!delEv) return;
-  await deleteEvidence(delEv.id);   // your existing deleter (files/links only)
-  setDelEv(null);
-}
-  // Derived UI render
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -429,7 +431,7 @@ async function confirmDeleteEvidence() {
             {activeProject?.name || "—"}
           </div>
 
-          {/* Project selector (inline on ≥sm) */}
+          {/* Project selector */}
           <div className="hidden sm:block">
             <select
               className="rounded-xl border border-slate-200 px-3 py-2 md:px-4 md:py-2.5"
@@ -443,11 +445,9 @@ async function confirmDeleteEvidence() {
               ))}
             </select>
           </div>
-
-          {/* REMOVED header "Edit project" button per request */}
         </div>
 
-        {/* Project selector for mobile */}
+        {/* Mobile selector */}
         <div className="sm:hidden">
           <div className="mb-1 text-xs text-slate-500">Project</div>
           <select
@@ -472,8 +472,10 @@ async function confirmDeleteEvidence() {
         {/* Overall progress */}
         {stats.total > 0 && (
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="mb-2 flex justify-between text-sm">
-              <span>{stats.done}/{stats.total} Complete</span>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+              <span>
+                {stats.done}/{stats.total} Complete
+              </span>
               <span>{Math.round((stats.done / stats.total) * 100)}%</span>
             </div>
 
@@ -492,7 +494,7 @@ async function confirmDeleteEvidence() {
               <span className="text-red-600">⛔ Delayed: {stats.delayed}</span>
             </div>
 
-            <div className="mt-4 flex gap-2">
+            <div className="mt-4 flex flex-wrap items-center gap-2">
               <button
                 onClick={() => {
                   if (!activeProjectId || !projects || !criteria) return;
@@ -500,7 +502,7 @@ async function confirmDeleteEvidence() {
                   if (!project) return;
                   generateCertificate(
                     { id: project.id, name: project.name },
-                    criteria.map((c) => ({
+                    (criteria ?? []).map((c) => ({
                       title: c.title,
                       status: String(c.status),
                       owner_email: c.owner_email ?? null,
@@ -514,15 +516,31 @@ async function confirmDeleteEvidence() {
                 Generate Certificate
               </button>
 
-            {activeProjectId && (
-  <Link
-    to={`/projects/${activeProjectId}/dashboard`}   // ✅ project-scoped
-    className="rounded-md border border-slate-200 bg-white px-3 py-1 text-sm hover:bg-slate-100"
-  >
-    View Dashboard
-  </Link>
-)}
+              {activeProjectId && (
+                <Link
+                  to={`/projects/${activeProjectId}/dashboard`}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-1 text-sm hover:bg-slate-100"
+                >
+                  View Dashboard
+                </Link>
+              )}
 
+              {/* View toggle */}
+              <div className="ml-auto flex items-center gap-1">
+                <span className="text-xs text-slate-500">View:</span>
+                <button
+                  onClick={() => setCompactView(true)}
+                  className={`rounded-md px-2 py-1 text-xs ${compactView ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+                >
+                  Compact
+                </button>
+                <button
+                  onClick={() => setCompactView(false)}
+                  className={`rounded-md px-2 py-1 text-xs ${!compactView ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+                >
+                  Detailed
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -597,103 +615,115 @@ async function confirmDeleteEvidence() {
               </div>
 
               {!isCollapsed && (
-                <div className="grid gap-3 px-4 pb-4">
-                  {items.map((c) => {
-                    const critNotes = notes.filter((n) => n.criterion_id === c.id);
-                    const activities = critNotes
-                      .filter((n) => n.kind === "note")
-                      .map((n) => ({
-                        id: n.id,
-                        type: "note" as const,
-                        summary: n.note ?? "",
-                        created_at: n.uploaded_at,
-                        created_by: n.created_by ?? "Unknown",
-                      }));
-                    // Build evidence list and tag files vs links for the card
-                    const evItems = critNotes
-                      .filter((n) => n.kind !== "note")
-                      .map((ev) => {
-                        const isFile = ev.kind === "file";
-                        const name =
-                          (ev.file_path ?? "").split("/").pop() ||
-                          (ev.url ?? "").split("/").pop() ||
-                          (isFile ? "file" : ev.url ?? "link");
-                        return {
-                          id: ev.id,
-                          name,
-                          url: ev.url ?? undefined, // may be null for private buckets
-                          file: isFile,
-                          created_at: ev.uploaded_at,
-                          created_by: ev.created_by ?? "Unknown",
-                        };
-                      });
-
-                    // Last action for narrative footer
-                    const last = [...critNotes].sort(
-                      (a, b) =>
-                        +new Date(a.uploaded_at) < +new Date(b.uploaded_at) ? 1 : -1
-                    )[0];
-                    const last_action = last
-                      ? {
-                          type: last.kind,
-                          summary:
-                            last.kind === "note"
-                              ? last.note ?? ""
-                              : last.url ?? (last as any).file_path ?? "",
-                          at: last.uploaded_at,
-                          by: last.created_by ?? "Unknown",
-                        }
-                      : null;
-
-                    return (
-                      <CriteriaCard
+                compactView ? (
+                  <div className="grid gap-2 px-4 pb-4">
+                    {items.map((c) => (
+                      <CriteriaRow
                         key={c.id}
-                        item={{
-                          id: c.id,
-                          title: c.title,
-                          description: (c as any).description ?? c.meta?.description ?? "",
-                          category: c.category ?? "",
-                          severity: c.meta?.severity ?? "",
-                          status: c.status as CriteriaStatus,
-                          owner_email: c.owner_email ?? "",
-                          due_date: c.due_date ?? "",
-                          last_action,
+                        title={c.title}
+                        severity={c.meta?.severity ?? c.meta?.SEVERITY}
+                        status={c.status as any}
+                        owner={c.owner_email ?? undefined}
+                        due={c.due_date ?? undefined}
+                        onStatusChange={(s) => handleUpdateStatus(c.id, s as any)}
+                        onOpen={() => {
+                          // optional: open a drawer or keep as is
                         }}
-                        activities={activities}
-                        evidence={evItems as any}
-                        onChangeStatus={(next) =>
-                          handleUpdateStatus(c.id, next as CriteriaStatus)
-                        }
-                        onChangeOwner={(email) => updateOwner(c.id, email)}
-                        onChangeDueDate={(dateISO) =>
-                          updateDueDate(c.id, dateISO)
-                        }
-                        onAddNote={(text) => addNote(c.id, text)}
-                         onAddEvidenceFile={() => promptEvidenceUpload(c.id)}
-  onAddEvidenceLink={() => openLinkModal(c.id)}
-  onRequestDeleteEvidence={(opts: { id: string; name: string }) => openDeleteModal(opts)}
-
-                        // NOTE: wire a delete control in CriteriaCard to call this:
-                        // onDeleteEvidence={(evidenceId) => deleteEvidence(evidenceId)}
                       />
-                    );
-                  })}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid gap-3 px-4 pb-4">
+                    {items.map((c) => {
+                      const critNotes = notes.filter((n) => n.criterion_id === c.id);
+                      const activities = critNotes
+                        .filter((n) => n.kind === "note")
+                        .map((n) => ({
+                          id: n.id,
+                          type: "note" as const,
+                          summary: n.note ?? "",
+                          created_at: n.uploaded_at,
+                          created_by: n.created_by ?? "Unknown",
+                        }));
+
+                      const evItems = critNotes
+                        .filter((n) => n.kind !== "note")
+                        .map((ev) => {
+                          const isFile = ev.kind === "file";
+                          const name =
+                            (ev.file_path ?? "").split("/").pop() ||
+                            (ev.url ?? "").split("/").pop() ||
+                            (isFile ? "file" : ev.url ?? "link");
+                          return {
+                            id: ev.id,
+                            name,
+                            url: ev.url ?? undefined,
+                            file: isFile,
+                            created_at: ev.uploaded_at,
+                            created_by: ev.created_by ?? "Unknown",
+                          };
+                        });
+
+                      // Last action
+                      const last = [...critNotes].sort(
+                        (a, b) => +new Date(a.uploaded_at) < +new Date(b.uploaded_at) ? 1 : -1
+                      )[0];
+                      const last_action = last
+                        ? {
+                            type: last.kind,
+                            summary:
+                              last.kind === "note"
+                                ? last.note ?? ""
+                                : last.url ?? (last as any).file_path ?? "",
+                            at: last.uploaded_at,
+                            by: last.created_by ?? "Unknown",
+                          }
+                        : null;
+
+                      return (
+                        <CriteriaCard
+                          key={c.id}
+                          item={{
+                            id: c.id,
+                            title: c.title,
+                            description: (c as any).description ?? c.meta?.description ?? "",
+                            category: c.category ?? "",
+                            severity: c.meta?.severity ?? "",
+                            status: c.status as CriteriaStatus,
+                            owner_email: c.owner_email ?? "",
+                            due_date: c.due_date ?? "",
+                            last_action,
+                          }}
+                          activities={activities}
+                          evidence={evItems as any}
+                          onChangeStatus={(next) => handleUpdateStatus(c.id, next as CriteriaStatus)}
+                          onChangeOwner={(email) => updateOwner(c.id, email)}
+                          onChangeDueDate={(dateISO) => updateDueDate(c.id, dateISO)}
+                          onAddNote={(text) => addNote(c.id, text)}
+                          onAddEvidenceFile={() => promptEvidenceUpload(c.id)}
+                          onAddEvidenceLink={() => openLinkModal(c.id)}
+                          // If you updated CriteriaCard to support onRequestDeleteEvidence:
+                           onRequestDeleteEvidence={(opts)=>openDeleteModal(opts)}
+                        />
+                      );
+                    })}
+                  </div>
+                )
               )}
             </section>
           );
         })}
       </div>
 
-      {/* Add Link modal (reuses ConfirmDialog) */}
+      {/* Add Link modal */}
       <ConfirmDialog
         open={!!linkForId}
         title="Add a link as evidence"
         message={
           <div className="space-y-2">
-            <label className="block text-xs text-slate-600">URL</label>
+            <label className="block text-xs text-slate-600">URL or reference</label>
             <input
-              type="text" // plain text per request
+              type="text"
               placeholder="Paste URL or reference"
               value={linkURL}
               onChange={(e) => {
@@ -703,10 +733,6 @@ async function confirmDeleteEvidence() {
               className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             />
             {linkErr && <div className="text-xs text-rose-600">{linkErr}</div>}
-            <p className="text-xs text-slate-500">
-              This will save a new row to <code>evidence</code> with{" "}
-              <code>kind="link"</code>.
-            </p>
           </div>
         }
         confirmLabel="Add link"
@@ -715,22 +741,23 @@ async function confirmDeleteEvidence() {
         onConfirm={confirmAddLink}
         onCancel={closeLinkModal}
       />
-	  
-	  <ConfirmDialog
-  open={!!delEv}
-  title="Delete evidence?"
-  message={
-    <div className="space-y-1">
-      <div>This will remove the selected evidence from this criterion.</div>
-      <div className="text-xs text-slate-500">{delEv?.name}</div>
-    </div>
-  }
-  confirmLabel="Delete"
-  cancelLabel="Cancel"
-  destructive
-  onConfirm={confirmDeleteEvidence}
-  onCancel={closeDeleteModal}
-/>
+
+      {/* Delete Evidence modal */}
+      <ConfirmDialog
+        open={!!delEv}
+        title="Delete evidence?"
+        message={
+          <div className="space-y-1">
+            <div>This will remove the selected evidence from this criterion.</div>
+            <div className="text-xs text-slate-500">{delEv?.name}</div>
+          </div>
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={confirmDeleteEvidence}
+        onCancel={closeDeleteModal}
+      />
     </div>
   );
 }
@@ -738,16 +765,10 @@ async function confirmDeleteEvidence() {
 // Owner & due date updaters for CriteriaCard
 async function updateOwner(criterionId: string, newEmail: string) {
   const v = newEmail || null;
-  const { error } = await supabase.from("criteria").update({ owner_email: v }).eq("id", criterionId);
-  if (error) {
-    return;
-  }
+  await supabase.from("criteria").update({ owner_email: v }).eq("id", criterionId);
 }
 
 async function updateDueDate(criterionId: string, newISO: string | null) {
   const v = newISO || null;
-  const { error } = await supabase.from("criteria").update({ due_date: v }).eq("id", criterionId);
-  if (error) {
-    return;
-  }
+  await supabase.from("criteria").update({ due_date: v }).eq("id", criterionId);
 }
