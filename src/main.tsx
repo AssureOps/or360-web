@@ -15,6 +15,9 @@ import AllocateCriteria from "./AllocateCriteria";
 import Projects from "./Projects"; // tile view
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
+// 🔔 Wire global certificate export handler once
+import "./events/certificate";
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <OrgProvider>

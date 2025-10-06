@@ -4,7 +4,7 @@ import { supabase } from "./lib/supabase";
 import { useOrg } from "./OrgContext";
 import ConfirmDialog from "./components/ConfirmDialog";
 import {
-  Plus, ClipboardCheck, PieChart, ListChecks, Trash2, Copy, ChevronRight
+  Plus, ClipboardCheck, PieChart, ListChecks, Trash2, Copy, ChevronRight, Settings
 } from "lucide-react";
 
 /** Types aligned with your schema */
@@ -240,60 +240,59 @@ export default function Projects() {
               </div>
 
               {/* Actions */}
-          {/* Actions (replace this block) */}
-<div className="mt-3 grid grid-cols-2 gap-2">
-  <Link
-    to={`/projects/${p.id}`}                     // ✅ Checklist (index of ProjectLayout)
-    onClick={() => { rememberLastProject(p.id); }}
-    className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-    title="Open Checklist"
-  >
-    <ClipboardCheck size={16} /> Checklist
-  </Link>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <Link
+                  to={`/projects/${p.id}`}
+                  onClick={() => { rememberLastProject(p.id); }}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                  title="Open Checklist"
+                >
+                  <ClipboardCheck size={16} /> Checklist
+                </Link>
 
-  <Link
-    to={`/projects/${p.id}/dashboard`}           // ✅ Project-scoped dashboard
-    onClick={() => { rememberLastProject(p.id); }}
-    className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-    title="View Dashboard"
-  >
-    <PieChart size={16} /> Dashboard
-  </Link>
+                <Link
+                  to={`/projects/${p.id}/dashboard`}
+                  onClick={() => { rememberLastProject(p.id); }}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                  title="View Dashboard"
+                >
+                  <PieChart size={16} /> Dashboard
+                </Link>
 
-  <Link
-    to={`/projects/${p.id}`}                     // optional: ‘Checklist’ again or Settings
-    onClick={() => { rememberLastProject(p.id); }}
-    className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-    title="Checklist"
-  >
-    <ClipboardCheck size={16} /> Checklist
-  </Link>
+                <Link
+                  to={`/projects/${p.id}/settings`}
+                  onClick={() => { rememberLastProject(p.id); }}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                  title="Project Settings"
+                >
+                  <Settings size={16} /> Settings
+                </Link>
 
-  <Link
-    to={`/projects/${p.id}/allocate`}            // ✅ Project-scoped allocate
-    onClick={() => { rememberLastProject(p.id); }}
-    className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-    title="Allocate Criteria"
-  >
-    <ListChecks size={16} /> Allocate
-  </Link>
+                <Link
+                  to={`/projects/${p.id}/allocate`}
+                  onClick={() => { rememberLastProject(p.id); }}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                  title="Allocate Criteria"
+                >
+                  <ListChecks size={16} /> Allocate
+                </Link>
 
-  <button
-    onClick={() => duplicateProject(p)}
-    className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-    title="Duplicate project (copies criteria)"
-  >
-    <Copy size={16} /> Duplicate
-  </button>
+                <button
+                  onClick={() => duplicateProject(p)}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                  title="Duplicate project (copies criteria)"
+                >
+                  <Copy size={16} /> Duplicate
+                </button>
 
-  <button
-    onClick={() => setDel(p)}
-    className="inline-flex items-center justify-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 hover:bg-rose-100"
-    title="Delete project"
-  >
-    <Trash2 size={16} /> Delete
-  </button>
-</div>
+                <button
+                  onClick={() => setDel(p)}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 hover:bg-rose-100"
+                  title="Delete project"
+                >
+                  <Trash2 size={16} /> Delete
+                </button>
+              </div>
 
             </div>
           );
