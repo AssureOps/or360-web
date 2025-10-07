@@ -129,6 +129,7 @@ export default function ProjectLayout() {
               <TopTab to="dashboard" icon={<PieChart size={16} />} label="Dashboard" />
               <TopTab to="allocate" icon={<ListChecks size={16} />} label="Allocate" />
               <TopTab to="settings" icon={<Settings size={16} />} label="Settings" />
+			  <TopTab to="evidence" icon={<FileCheck2 size={16} />} label="Evidence" />
             </div>
           </nav>
         </header>

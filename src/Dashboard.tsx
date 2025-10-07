@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
+import { Link } from "react-router-dom";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, Legend as RLegend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer
@@ -168,7 +169,6 @@ export default function Dashboard() {
       {/* Header */}
       <header className="mb-2 space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-         
           <div className="flex items-center gap-2">
             <select
               className="rounded-xl border border-slate-200 px-3 py-2"
@@ -287,7 +287,7 @@ export default function Dashboard() {
                         <div className="flex items-start gap-2">
                           <ChevronRight size={14} className="text-slate-400 mt-0.5" />
                           <div>
-                            <div className="font-medium text-slate-800">{o.title}</div>
+                            <Link className="font-medium text-slate-800 underline" to={`/projects/${activeProjectId}#c-${o.id}`}>{o.title}</Link>
                             <div className="text-xs text-slate-500">{o.category ?? "Uncategorised"}</div>
                           </div>
                         </div>
@@ -325,7 +325,7 @@ export default function Dashboard() {
                 <tbody className="divide-y divide-slate-100">
                   {caveatItems.map(c => (
                     <tr key={c.id} className="align-top">
-                      <td className="px-2 py-2">{c.title}</td>
+                      <td className="px-2 py-2"><Link className="underline" to={`/projects/${activeProjectId}#c-${c.id}`}>{c.title}</Link></td>
                       <td className="px-2 py-2">{c.category ?? "-"}</td>
                       <td className="px-2 py-2">{c.owner_email ?? "-"}</td>
                       <td className="px-2 py-2">{c.caveat_reason ?? "-"}</td>

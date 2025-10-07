@@ -1,411 +1,466 @@
-import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, Check, FileText, MessageSquareText, Paperclip, Link as LinkIcon, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
 
+/** Keep this exported for App.tsx imports */
 export type CriteriaStatus =
   | "not_started"
   | "in_progress"
+  | "blocked"
   | "done"
   | "delayed"
-  | "caveat";
+  | "caveat"
+  | string;
 
-export type ActivityItem = {
-  id: string;
-  type: "note" | "status" | "evidence";
+type LastAction = {
+  type: string;
   summary: string;
-  created_at: string; // ISO
-  created_by: string; // email or name
-};
+  at: string;
+  by: string;
+} | null;
 
-export type EvidenceItem = {
+type Activity = {
   id: string;
-  name: string;
-  url?: string;        // for links (and files if you pre-resolve)
-  file?: boolean;      // true if it's a file
-  created_at: string;  // ISO
+  type: "note";
+  summary: string;
+  created_at: string;
   created_by: string;
 };
 
-export type Criteria = {
+type EvidenceRow = {
+  id: string;
+  name: string;
+  url?: string;
+  file: boolean;
+  created_at: string;
+  created_by: string;
+};
+
+type Item = {
   id: string;
   title: string;
-  description?: string | null;
-  category?: string | null;
-  severity?: "low" | "med" | "high" | string | null;
+  description?: string;
+  category?: string;
+  severity?: string;
   status: CriteriaStatus;
-  owner_email?: string | null;
-  due_date?: string | null; // yyyy-mm-dd
-  last_action?: { type: string; summary: string; at: string; by: string } | null;
+  owner_email?: string;
+  due_date?: string;
+  last_action?: LastAction;
 };
 
 type Props = {
-  item: Criteria;
-  activities: ActivityItem[];
-  evidence: EvidenceItem[]; // mixed — we'll split into files/links in this component
-
+  item: Item;
+  activities: Activity[];
+  evidence: EvidenceRow[];
   onChangeStatus: (next: CriteriaStatus) => void;
   onChangeOwner: (email: string) => void;
-  onChangeDueDate: (dateISO: string | null) => void;
-
-  onAddNote: (text: string) => Promise<void> | void;
-  onAddEvidenceFile?: () => void; // opens file picker / upload flow
-  onAddEvidenceLink?: () => void; // opens your “add link” prompt flow
-
-  /** New: ask parent to confirm deletion using a modal */
+  onChangeDueDate: (iso: string | null) => void;
+  onAddNote: (text: string) => void;
+  onAddEvidenceFile: () => void;
+  onAddEvidenceLink: () => void;
   onRequestDeleteEvidence?: (opts: { id: string; name: string }) => void;
 };
 
+const STATUS_LABEL: Record<Exclude<CriteriaStatus, string>, string> = {
+  not_started: "Not started",
+  in_progress: "In progress",
+  blocked: "Blocked",
+  done: "Done",
+  delayed: "Delayed",
+  caveat: "Caveat",
+};
+
+function dotForStatus(s: CriteriaStatus) {
+  switch (s) {
+    case "not_started": return "bg-gray-400";
+    case "in_progress": return "bg-blue-600";
+    case "blocked": return "bg-amber-600";
+    case "done": return "bg-emerald-600";
+    case "delayed": return "bg-red-600";
+    case "caveat": return "bg-purple-700";
+    default: return "bg-gray-400";
+  }
+}
+
 export default function CriteriaCard({
-  item,
-  activities,
-  evidence,
-  onChangeStatus,
-  onChangeOwner,
-  onChangeDueDate,
-  onAddNote,
-  onAddEvidenceFile,
-  onAddEvidenceLink,
+  item, activities, evidence,
+  onChangeStatus, onChangeOwner, onChangeDueDate,
+  onAddNote, onAddEvidenceFile, onAddEvidenceLink,
   onRequestDeleteEvidence,
 }: Props) {
-  const [tab, setTab] = useState<"activity" | "evidence">("activity");
-  const [note, setNote] = useState("");
+  const [tab, setTab] = useState<"activity" | "evidence" | "details">("activity");
 
-  // ---- Pagination ----
-  const ACT_PAGE_SIZE = 5;
-  const FILE_PAGE_SIZE = 5;
-  const LINK_PAGE_SIZE = 5;
+  // Evidence composer state (narrative-first, optional attachment)
+  const [narrative, setNarrative] = useState("");
+  const [attachMode, setAttachMode] = useState<"none" | "link" | "file">("none");
 
-  const [activityPage, setActivityPage] = useState(1);
-  const [filePage, setFilePage] = useState(1);
-  const [linkPage, setLinkPage] = useState(1);
+  // Pagination state
+  const [actPage, setActPage] = useState(1);
+  const [evPage, setEvPage] = useState(1);
+  const pageSize = 5;
 
-  // Reset page on changes
-  useEffect(() => { setActivityPage(1); }, [activities.length]);
-  useEffect(() => { setFilePage(1); setLinkPage(1); }, [evidence.length]);
-  useEffect(() => {
-    if (tab === "activity") setActivityPage(1);
-    else { setFilePage(1); setLinkPage(1); }
-  }, [tab]);
+  const actTotal = activities.length;
+  const evTotal = evidence.length;
 
-  // Split evidence
-  const files = useMemo(() => evidence.filter(e => e.file === true), [evidence]);
-  const links = useMemo(() => evidence.filter(e => !e.file), [evidence]);
+  const actPageCount = Math.max(1, Math.ceil(actTotal / pageSize));
+  const evPageCount = Math.max(1, Math.ceil(evTotal / pageSize));
 
-  // Paged activity
-  const activityTotal = activities.length;
-  const activityPages = Math.max(1, Math.ceil(activityTotal / ACT_PAGE_SIZE));
-  const pagedActivities = useMemo(() => {
-    const start = (activityPage - 1) * ACT_PAGE_SIZE;
-    return activities.slice(start, start + ACT_PAGE_SIZE);
-  }, [activities, activityPage]);
+  const actSlice = useMemo(() => {
+    const start = (actPage - 1) * pageSize;
+    return activities.slice(start, start + pageSize);
+  }, [activities, actPage]);
 
-  // Paged files
-  const fileTotal = files.length;
-  const filePages = Math.max(1, Math.ceil(fileTotal / FILE_PAGE_SIZE));
-  const pagedFiles = useMemo(() => {
-    const start = (filePage - 1) * FILE_PAGE_SIZE;
-    return files.slice(start, start + FILE_PAGE_SIZE);
-  }, [files, filePage]);
-
-  // Paged links
-  const linkTotal = links.length;
-  const linkPages = Math.max(1, Math.ceil(linkTotal / LINK_PAGE_SIZE));
-  const pagedLinks = useMemo(() => {
-    const start = (linkPage - 1) * LINK_PAGE_SIZE;
-    return links.slice(start, start + LINK_PAGE_SIZE);
-  }, [links, linkPage]);
-
-  const statusOptions: { value: CriteriaStatus; label: string }[] = [
-    { value: "not_started", label: "Not started" },
-    { value: "in_progress", label: "In progress" },
-    { value: "done", label: "Done" },
-    { value: "delayed", label: "Delayed" },
-    { value: "caveat", label: "Caveat" },
-  ];
-
-  const statusBadge = useMemo(() => {
-    const m: Record<CriteriaStatus, string> = {
-      not_started: "bg-slate-100 text-slate-700",
-      in_progress: "bg-blue-100 text-blue-700",
-      done: "bg-emerald-100 text-emerald-700",
-      delayed: "bg-amber-100 text-amber-700",
-      caveat: "bg-violet-100 text-violet-700",
-    };
-    return m[item.status];
-  }, [item.status]);
-
-  // Overdue
-  const isOverdue = useMemo(() => {
-    if (!item.due_date) return false;
-    try {
-      const today = new Date(); today.setHours(0,0,0,0);
-      const due = new Date(item.due_date + "T00:00:00");
-      return due < today;
-    } catch { return false; }
-  }, [item.due_date]);
+  const evSlice = useMemo(() => {
+    const start = (evPage - 1) * pageSize;
+    return evidence.slice(start, start + pageSize);
+  }, [evidence, evPage]);
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <div className="rounded-2xl border bg-white p-4">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 px-5 pt-4">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-lg font-semibold">{item.title}</h3>
-            {item.severity && (
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs">
-                {(item.severity ?? "").toString().toUpperCase()}
-              </span>
-            )}
-            <span className={`rounded-full px-2 py-0.5 text-xs ${statusBadge}`} title="Current status">
-              {statusOptions.find((o) => o.value === item.status)?.label}
-            </span>
+          <div className="flex items-center gap-2">
+            <span className={"inline-block h-2 w-2 rounded-full " + dotForStatus(item.status)} />
+            <h3 className="truncate text-sm font-semibold leading-5">{item.title}</h3>
           </div>
           {item.description && (
-            <p className="mt-1 text-sm italic text-slate-600">{item.description}</p>
+            <p className="mt-1 text-sm text-slate-700">{item.description}</p>
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            {item.category && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{item.category}</span>}
+            {item.severity && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{String(item.severity).toUpperCase()}</span>}
+            {item.owner_email && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{item.owner_email}</span>}
+            {item.due_date && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{item.due_date}</span>}
+          </div>
+          {item.last_action && (
+            <div className="mt-2 text-xs text-slate-500">
+              Last: {item.last_action.summary} — {new Date(item.last_action.at).toLocaleString()}
+            </div>
           )}
         </div>
 
-        {/* Status */}
-        <div className="shrink-0">
-          <label className="block text-xs font-medium text-slate-600">Status</label>
-          <select
-            value={item.status}
-            onChange={(e) => onChangeStatus(e.target.value as CriteriaStatus)}
-            className="mt-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          >
-            {statusOptions.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Ownership & Target */}
-      <div className="mx-5 mt-4 rounded-xl bg-slate-50 p-4">
-        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          Ownership &amp; Target
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="block text-xs font-medium text-slate-600">Owner (email)</label>
-            <input
-              type="email"
-              placeholder="owner@example.com"
-              value={item.owner_email || ""}
-              onChange={(e) => onChangeOwner(e.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600">Target date</label>
-            <div className="mt-1 flex items-center gap-2">
-              <CalendarDays size={16} className={isOverdue ? "text-red-600" : "text-slate-500"} />
-              <input
-                type="date"
-                value={item.due_date || ""}
-                onChange={(e) => onChangeDueDate(e.target.value || null)}
-                className={`w-full rounded-md border px-3 py-2 text-sm ${
-                  isOverdue ? "border-red-500 bg-red-50 text-red-700" : "border-slate-300 bg-white text-slate-900"
-                }`}
-              />
-            </div>
-            {isOverdue && <div className="mt-1 text-xs font-medium text-red-700">⚠ Overdue</div>}
-          </div>
-        </div>
+        {/* Status control */}
+        <StatusSelect value={item.status} onChange={onChangeStatus} />
       </div>
 
       {/* Tabs */}
-      <div className="mt-4 px-5">
-        <div className="flex items-center gap-3">
-          <button
-            className={`rounded-md px-3 py-1.5 text-sm ${tab === "activity" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
-            onClick={() => setTab("activity")}
-          >
-            Activity ({activities.length})
-          </button>
-          <button
-            className={`rounded-md px-3 py-1.5 text-sm ${tab === "evidence" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
-            onClick={() => setTab("evidence")}
-          >
-            Evidence ({evidence.length})
-          </button>
-          {tab === "evidence" && (
-            <div className="ml-auto flex items-center gap-2">
-              {onAddEvidenceFile && (
-                <button
-                  className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-                  onClick={onAddEvidenceFile}
-                  title="Upload file"
-                >
-                  <Paperclip size={16} /> Upload file
-                </button>
-              )}
-              {onAddEvidenceLink && (
-                <button
-                  className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-                  onClick={onAddEvidenceLink}
-                  title="Add a URL"
-                >
-                  <LinkIcon size={16} /> Add link
-                </button>
-              )}
-            </div>
-          )}
-        </div>
+      <div className="mt-4 flex items-center gap-2">
+        <TabButton active={tab === "activity"} onClick={() => setTab("activity")}>
+          Activity <Badge>{actTotal}</Badge>
+        </TabButton>
+        <TabButton active={tab === "evidence"} onClick={() => setTab("evidence")}>
+          Evidence <Badge>{evTotal}</Badge>
+        </TabButton>
+        <TabButton active={tab === "details"} onClick={() => setTab("details")}>Details</TabButton>
       </div>
 
-      {/* Tab panes */}
-      <div className="px-5 pb-4">
-        {tab === "activity" ? (
-          <>
-            <div className="mt-3 flex items-center gap-2">
-              <MessageSquareText size={16} className="text-slate-500" />
-              <input
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Add an activity note…"
-                className="h-10 flex-1 rounded-md border border-slate-300 bg-white px-3 text-sm"
-                onKeyDown={async (e) => {
-                  if (e.key === "Enter" && note.trim()) {
-                    await onAddNote(note.trim()); setNote("");
-                  }
-                }}
-              />
-              <button
-                className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800"
-                onClick={async () => {
-                  if (!note.trim()) return;
-                  await onAddNote(note.trim()); setNote("");
-                }}
-              >
-                Add
-              </button>
-            </div>
+      {/* Bodies */}
+      <div className="mt-3">
+        {tab === "activity" && (
+          <ActivityTab
+            activities={actSlice}
+            total={actTotal}
+            page={actPage}
+            pageCount={actPageCount}
+            onPageChange={setActPage}
+            onAdd={(t) => { if (t.trim()) onAddNote(t.trim()); }}
+          />
+        )}
 
-            <div className="mt-4 space-y-3">
-              {activityTotal === 0 && (
-                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                  No activity yet.
-                </div>
-              )}
-              {pagedActivities.map((a) => (
-                <div key={a.id} className="flex items-start gap-2 rounded-md border border-slate-200 bg-white px-3 py-2">
-                  <FileText size={16} className="mt-1 text-slate-500" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm">{a.summary}</div>
-                    <div className="mt-0.5 text-xs text-slate-500">{fmt(a.created_at)} — {a.created_by}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
+        {tab === "evidence" && (
+          <EvidenceTab
+            narrative={narrative}
+            setNarrative={setNarrative}
+            attachMode={attachMode}
+            setAttachMode={setAttachMode}
+            onSubmit={() => {
+              const text = narrative.trim();
+              if (!text) return;
+              // Save narrative as an activity entry first
+              onAddNote(text);
+              // Then attach the link or file if requested
+              if (attachMode === "link") onAddEvidenceLink();
+              if (attachMode === "file") onAddEvidenceFile();
+              // Reset composer
+              setNarrative("");
+              setAttachMode("none");
+            }}
+            evidence={evSlice}
+            total={evTotal}
+            page={evPage}
+            pageCount={evPageCount}
+            onPageChange={setEvPage}
+            onDelete={(row) => onRequestDeleteEvidence?.({ id: row.id, name: row.name })}
+          />
+        )}
 
-            {activityPages > 1 && (
-              <Pager page={activityPage} pages={activityPages} onPrev={() => setActivityPage(p => Math.max(1, p - 1))} onNext={() => setActivityPage(p => Math.min(activityPages, p + 1))} />
-            )}
-          </>
-        ) : (
-          <>
-            {/* Files */}
-            <div className="mt-3">
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Files ({fileTotal})</div>
-              <div className="space-y-3">
-                {fileTotal === 0 && (
-                  <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                    No files uploaded.
-                  </div>
-                )}
-                {pagedFiles.map((ev) => (
-                  <div key={ev.id} className="flex items-start gap-2 rounded-md border border-slate-200 bg-white px-3 py-2">
-                    <Check size={16} className="mt-1 text-emerald-600" />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm">
-                        {ev.url ? (
-                          <a href={ev.url} target="_blank" rel="noreferrer" className="underline">{ev.name}</a>
-                        ) : ev.name}
-                      </div>
-                      <div className="mt-0.5 text-xs text-slate-500">{fmt(ev.created_at)} — {ev.created_by}</div>
-                    </div>
-                    {onRequestDeleteEvidence && (
-                      <button
-                        className="ml-2 inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700 hover:bg-rose-100"
-                        onClick={() => onRequestDeleteEvidence({ id: ev.id, name: ev.name })}
-                        title="Delete file"
-                      >
-                        <Trash2 size={14} /> Delete
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {filePages > 1 && (
-                <Pager page={filePage} pages={filePages} onPrev={() => setFilePage(p => Math.max(1, p - 1))} onNext={() => setFilePage(p => Math.min(filePages, p + 1))} />
-              )}
-            </div>
-
-            {/* Links */}
-            <div className="mt-6">
-              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Links ({linkTotal})</div>
-              <div className="space-y-3">
-                {linkTotal === 0 && (
-                  <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                    No links added.
-                  </div>
-                )}
-                {pagedLinks.map((ev) => (
-                  <div key={ev.id} className="flex items-start gap-2 rounded-md border border-slate-200 bg-white px-3 py-2">
-                    <Check size={16} className="mt-1 text-emerald-600" />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm">
-                        {ev.url ? <a href={ev.url} target="_blank" rel="noreferrer" className="underline">{ev.name}</a> : ev.name}
-                      </div>
-                      <div className="mt-0.5 text-xs text-slate-500">{fmt(ev.created_at)} — {ev.created_by}</div>
-                    </div>
-                    {onRequestDeleteEvidence && (
-                      <button
-                        className="ml-2 inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs text-rose-700 hover:bg-rose-100"
-                        onClick={() => onRequestDeleteEvidence({ id: ev.id, name: ev.name })}
-                        title="Delete link"
-                      >
-                        <Trash2 size={14} /> Delete
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {linkPages > 1 && (
-                <Pager page={linkPage} pages={linkPages} onPrev={() => setLinkPage(p => Math.max(1, p - 1))} onNext={() => setLinkPage(p => Math.min(linkPages, p + 1))} />
-              )}
-            </div>
-          </>
+        {tab === "details" && (
+          <DetailsTab
+            ownerEmail={item.owner_email ?? ""}
+            dueISO={item.due_date ?? ""}
+            onChangeOwner={onChangeOwner}
+            onChangeDueDate={onChangeDueDate}
+          />
         )}
       </div>
+    </div>
+  );
+}
 
-      {/* Last action */}
-      {item.last_action && (
-        <div className="flex items-center justify-between gap-3 rounded-b-2xl border-t border-slate-200 bg-slate-50 px-5 py-3">
-          <div className="text-sm">
-            <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs">
-              <FileText size={14} /> Last action:
-            </span>{" "}
-            <span className="rounded-md bg-white px-2 py-0.5 text-xs">{item.last_action.type}</span>{" "}
-            {item.last_action.summary}
-          </div>
-          <div className="text-xs text-slate-500">{fmt(item.last_action.at)} — {item.last_action.by}</div>
+function Badge({ children }: { children: React.ReactNode }) {
+  return <span className="ml-2 rounded-full bg-slate-200 px-1.5 py-0.5 text-xs">{children}</span>;
+}
+
+function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-md px-3 py-1.5 text-sm ${active ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function StatusSelect({ value, onChange }: { value: CriteriaStatus; onChange: (v: CriteriaStatus) => void }) {
+  const [open, setOpen] = useState(false);
+  const options: CriteriaStatus[] = ["not_started", "in_progress", "blocked", "done", "delayed", "caveat"];
+  return (
+    <div className="relative">
+      <button
+        className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className={"h-1.5 w-1.5 rounded-full " + dotForStatus(value)} />
+        {STATUS_LABEL[value as keyof typeof STATUS_LABEL] ?? String(value)}
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border bg-white p-1 shadow">
+          {options.map((s) => (
+            <button
+              key={s}
+              className={"flex w-full items-center gap-2 rounded px-2 py-1 text-left text-sm hover:bg-slate-50 " + (s === value ? "font-semibold" : "")}
+              onClick={() => { onChange(s); setOpen(false); }}
+            >
+              <span className={"h-2 w-2 rounded-full " + dotForStatus(s)} />
+              {STATUS_LABEL[s as keyof typeof STATUS_LABEL] ?? String(s)}
+            </button>
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-function Pager({ page, pages, onPrev, onNext }: { page: number; pages: number; onPrev: () => void; onNext: () => void }) {
+function Pager({
+  page, pageCount, onPageChange, className = ""
+}: { page: number; pageCount: number; onPageChange: (n: number) => void; className?: string }) {
+  const canPrev = page > 1;
+  const canNext = page < pageCount;
   return (
-    <div className="mt-3 flex items-center justify-end gap-2 text-xs text-slate-600">
-      <button className="rounded-md border border-slate-300 px-2 py-1 disabled:opacity-50" onClick={onPrev} disabled={page === 1}>Prev</button>
-      <span>Page {page} / {pages}</span>
-      <button className="rounded-md border border-slate-300 px-2 py-1 disabled:opacity-50" onClick={onNext} disabled={page === pages}>Next</button>
+    <div className={"flex items-center justify-end gap-2 " + className}>
+      <button
+        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm disabled:opacity-50"
+        onClick={() => onPageChange(1)}
+        disabled={!canPrev}
+        title="First page"
+      >
+        «
+      </button>
+      <button
+        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm disabled:opacity-50"
+        onClick={() => onPageChange(page - 1)}
+        disabled={!canPrev}
+        title="Previous page"
+      >
+        ‹
+      </button>
+      <span className="text-xs text-slate-600">Page {page} of {pageCount}</span>
+      <button
+        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm disabled:opacity-50"
+        onClick={() => onPageChange(page + 1)}
+        disabled={!canNext}
+        title="Next page"
+      >
+        ›
+      </button>
+      <button
+        className="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm disabled:opacity-50"
+        onClick={() => onPageChange(pageCount)}
+        disabled={!canNext}
+        title="Last page"
+      >
+        »
+      </button>
     </div>
   );
 }
 
-function fmt(iso: string) {
-  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+function ActivityTab({
+  activities, total, page, pageCount, onPageChange, onAdd
+}: {
+  activities: Activity[]; total: number; page: number; pageCount: number;
+  onPageChange: (n: number) => void; onAdd: (text: string) => void;
+}) {
+  const [text, setText] = useState("");
+  return (
+    <div className="grid gap-3">
+      <div className="flex items-center gap-2">
+        <input
+          className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
+          placeholder="Write a quick activity note…"
+          value={text}
+          onChange={(e) => setText(e.currentTarget.value)}
+        />
+        <button
+          className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
+          disabled={!text.trim()}
+          onClick={() => { onAdd(text); setText(""); }}
+        >
+          Add
+        </button>
+      </div>
+
+      <div className="flex items-center justify-between text-xs text-slate-600">
+        <span>{total} total</span>
+        <Pager page={page} pageCount={pageCount} onPageChange={onPageChange} />
+      </div>
+
+      <ul className="divide-y">
+        {activities.length === 0 && (
+          <li className="py-4 text-sm text-slate-600">No activity yet.</li>
+        )}
+        {activities.map((a) => (
+          <li key={a.id} className="py-2">
+            <div className="text-sm">{a.summary}</div>
+            <div className="text-xs text-slate-500">{new Date(a.created_at).toLocaleString()} · {a.created_by}</div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function EvidenceTab({
+  narrative, setNarrative, attachMode, setAttachMode, onSubmit,
+  evidence, total, page, pageCount, onPageChange, onDelete,
+}: {
+  narrative: string;
+  setNarrative: (v: string) => void;
+  attachMode: "none" | "link" | "file";
+  setAttachMode: (m: "none" | "link" | "file") => void;
+  onSubmit: () => void;
+  evidence: EvidenceRow[];
+  total: number;
+  page: number;
+  pageCount: number;
+  onPageChange: (n: number) => void;
+  onDelete: (row: EvidenceRow) => void;
+}) {
+  return (
+    <div className="grid gap-3">
+      {/* Composer */}
+      <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <label className="block text-xs text-slate-600 mb-1">Narrative / Description (required)</label>
+        <textarea
+          className="w-full min-h-[90px] rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+          placeholder="What is this evidence? What changed, why, by whom…"
+          value={narrative}
+          onChange={(e)=>setNarrative(e.currentTarget.value)}
+        />
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-xs text-slate-600">Attach:</span>
+          <label className={"rounded-full border px-2 py-0.5 " + (attachMode==="none" ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-300")}>
+            <input type="radio" className="hidden" checked={attachMode==="none"} onChange={()=>setAttachMode("none")} />
+            None
+          </label>
+          <label className={"rounded-full border px-2 py-0.5 " + (attachMode==="link" ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-300")}>
+            <input type="radio" className="hidden" checked={attachMode==="link"} onChange={()=>setAttachMode("link")} />
+            Link
+          </label>
+          <label className={"rounded-full border px-2 py-0.5 " + (attachMode==="file" ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-300")}>
+            <input type="radio" className="hidden" checked={attachMode==="file"} onChange={()=>setAttachMode("file")} />
+            File
+          </label>
+          <button
+            className="ml-auto rounded-md bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
+            onClick={onSubmit}
+            disabled={!narrative.trim()}
+            title={attachMode==="link" ? "You will be prompted for a URL" : attachMode==="file" ? "You will be prompted to choose a file" : "Add a narrative-only entry"}
+          >
+            Add Evidence
+          </button>
+        </div>
+      </section>
+
+      {/* List */}
+      <section className="rounded-xl border border-slate-200 bg-white p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-sm font-semibold">Evidence</div>
+          <div className="flex items-center gap-3 text-xs text-slate-600">
+            <span>{total} total</span>
+            <Pager page={page} pageCount={pageCount} onPageChange={onPageChange} />
+          </div>
+        </div>
+        {evidence.length === 0 ? (
+          <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-center text-slate-600">
+            No evidence yet.
+          </div>
+        ) : (
+          <ul className="grid gap-2">
+            {evidence.map((e) => (
+              <li key={e.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">
+                    {e.file ? (e.name || "File") : (e.url ? <a className="underline break-all" href={e.url} target="_blank" rel="noreferrer">{e.url}</a> : e.name)}
+                  </div>
+                  <div className="text-xs text-slate-500">{new Date(e.created_at).toLocaleString()} · {e.created_by}</div>
+                </div>
+                <button className="text-xs underline text-slate-700" onClick={() => onDelete(e)}>
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function DetailsTab({
+  ownerEmail, dueISO, onChangeOwner, onChangeDueDate,
+}: {
+  ownerEmail: string;
+  dueISO: string;
+  onChangeOwner: (email: string) => void;
+  onChangeDueDate: (iso: string | null) => void;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 grid gap-3 md:grid-cols-2">
+      {/* Owner */}
+      <label className="grid gap-1 text-sm">
+        <span className="text-slate-700">Owner</span>
+        <input
+          type="email"
+          value={ownerEmail ?? ""}
+          onChange={(e) => onChangeOwner(e.currentTarget.value)}
+          placeholder="name@acme.com"
+          className="rounded-md border border-slate-300 px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900"
+        />
+        <span className="text-xs text-slate-500">Who is accountable for this criterion?</span>
+      </label>
+
+      {/* Target date */}
+      <label className="grid gap-1 text-sm">
+        <span className="text-slate-700">Target date</span>
+        <input
+          type="date"
+          value={dueISO ?? ""}
+          onChange={(e) => onChangeDueDate(e.currentTarget.value || null)}
+          className="rounded-md border border-slate-300 px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900"
+        />
+        <span className="text-xs text-slate-500">Optional target for completion.</span>
+      </label>
+    </div>
+  );
 }

@@ -161,7 +161,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load criteria + (optionally) evidence for active project
+  // Load criteria + evidence for active project
   useEffect(() => {
     if (!activeProjectId) return;
     setLoading(true);
@@ -181,28 +181,22 @@ export default function App() {
       }
       setCriteria(crits as Criterion[] | null);
 
-      // ⏱ Lazy load evidence: only fetch when Detailed view is active
-      if (!compactView) {
-        const ids = (crits ?? []).map((c: any) => c.id);
-        if (ids.length) {
-          const { data: ev, error: evErr } = await supabase
-            .from("evidence")
-            .select(
-              "id,criterion_id,kind,note,url,file_path,mime_type,size_bytes,uploaded_at,created_by,updated_at,meta"
-            )
-            .in("criterion_id", ids);
-          if (evErr) setErr(evErr.message);
-          setNotes((ev ?? []) as Note[]);
-        } else {
-          setNotes([]);
-        }
+      const ids = (crits ?? []).map((c: any) => c.id);
+      if (ids.length) {
+        const { data: ev, error: evErr } = await supabase
+          .from("evidence")
+          .select(
+            "id,criterion_id,kind,note,url,file_path,mime_type,size_bytes,uploaded_at,created_by,updated_at,meta"
+          )
+          .in("criterion_id", ids);
+        if (evErr) setErr(evErr.message);
+        setNotes((ev ?? []) as Note[]);
       } else {
-        // Compact view: don't prefetch evidence for speed on big projects
         setNotes([]);
       }
       setLoading(false);
     })();
-  }, [activeProjectId, compactView]);
+  }, [activeProjectId]);
 
   // Derived
   const filtered = useMemo(() => {
@@ -373,26 +367,47 @@ export default function App() {
   }
 
   async function addLink(criterionId: string, url: string) {
-    const v = url.trim();
-    if (!v) return;
-    const { data, error } = await supabase
+  const v = url.trim();
+  if (!v) return;
+
+  // 1) Insert the link evidence
+  const { data, error } = await supabase
+    .from("evidence")
+    .insert({
+      criterion_id: criterionId,
+      kind: "link",
+      url: v,
+      created_by: currentUserEmail,
+    })
+    .select(
+      "id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta"
+    )
+    .single();
+
+  if (error) {
+    setErr(error.message);
+    return;
+  }
+  setNotes((prev) => [data as Note, ...prev]);
+
+  // 2) Insert an activity note
+  try {
+    const { data: noteRow } = await supabase
       .from("evidence")
       .insert({
         criterion_id: criterionId,
-        kind: "link",
-        url: v,
+        kind: "note",
+        note: `Link added: ${v}`,
         created_by: currentUserEmail,
       })
       .select(
         "id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta"
       )
       .single();
-    if (error) {
-      setErr(error.message);
-      return;
-    }
-    setNotes((prev) => [data as Note, ...prev]);
-  }
+
+    if (noteRow) setNotes((prev) => [noteRow as Note, ...prev]);
+  } catch {}
+}
 
   // Delete evidence (files & links only — notes are protected)
   async function deleteEvidence(evidenceId: string) {
@@ -633,7 +648,7 @@ export default function App() {
                         due={c.due_date ?? undefined}
                         onStatusChange={(s) => handleUpdateStatus(c.id, s as any)}
                         onOpen={() => {
-                          // optional: open a drawer or keep as is
+                          // keep inline flow; nothing to open
                         }}
                       />
                     ))}
