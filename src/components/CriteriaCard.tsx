@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 /** Keep this exported for App.tsx imports */
 export type CriteriaStatus =
@@ -59,7 +59,7 @@ type Props = {
   onRequestDeleteEvidence?: (opts: { id: string; name: string }) => void;
 };
 
-const STATUS_LABEL: Record<Exclude<CriteriaStatus, string>, string> = {
+const STATUS_LABEL: Record<string, string> = {
   not_started: "Not started",
   in_progress: "In progress",
   blocked: "Blocked",
@@ -79,7 +79,15 @@ function dotForStatus(s: CriteriaStatus) {
     default: return "bg-gray-400";
   }
 }
+function isImageUrl(u?: string) {
+  if (!u) return false;
+  return /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(u);
+}
 
+function isPdfUrl(u?: string) {
+  if (!u) return false;
+  return /\.pdf(\?.*)?$/i.test(u);
+}
 export default function CriteriaCard({
   item, activities, evidence,
   onChangeStatus, onChangeOwner, onChangeDueDate,
@@ -113,6 +121,18 @@ export default function CriteriaCard({
     return evidence.slice(start, start + pageSize);
   }, [evidence, evPage]);
 
+  // Keep pages valid when totals change
+  useEffect(() => { if (actPage > actPageCount) setActPage(actPageCount); }, [actPage, actPageCount]);
+  useEffect(() => { if (evPage > evPageCount) setEvPage(evPageCount); }, [evPage, evPageCount]);
+
+  // Local (optimistic) details state so the header chips update immediately on Save
+  const [ownerLocal, setOwnerLocal] = useState(item.owner_email ?? "");
+  const [dueLocal, setDueLocal] = useState(item.due_date ?? "");
+
+  // keep local in sync if parent changes
+  useEffect(() => { setOwnerLocal(item.owner_email ?? ""); }, [item.owner_email]);
+  useEffect(() => { setDueLocal(item.due_date ?? ""); }, [item.due_date]);
+
   return (
     <div className="rounded-2xl border bg-white p-4">
       {/* Header */}
@@ -128,8 +148,8 @@ export default function CriteriaCard({
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
             {item.category && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{item.category}</span>}
             {item.severity && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{String(item.severity).toUpperCase()}</span>}
-            {item.owner_email && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{item.owner_email}</span>}
-            {item.due_date && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{item.due_date}</span>}
+            {ownerLocal && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{ownerLocal}</span>}
+            {dueLocal && <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5">{dueLocal}</span>}
           </div>
           {item.last_action && (
             <div className="mt-2 text-xs text-slate-500">
@@ -145,10 +165,10 @@ export default function CriteriaCard({
       {/* Tabs */}
       <div className="mt-4 flex items-center gap-2">
         <TabButton active={tab === "activity"} onClick={() => setTab("activity")}>
-          Activity <Badge>{actTotal}</Badge>
+          Activity ({actTotal})
         </TabButton>
         <TabButton active={tab === "evidence"} onClick={() => setTab("evidence")}>
-          Evidence <Badge>{evTotal}</Badge>
+          Evidence ({evTotal})
         </TabButton>
         <TabButton active={tab === "details"} onClick={() => setTab("details")}>Details</TabButton>
       </div>
@@ -195,19 +215,24 @@ export default function CriteriaCard({
 
         {tab === "details" && (
           <DetailsTab
-            ownerEmail={item.owner_email ?? ""}
-            dueISO={item.due_date ?? ""}
-            onChangeOwner={onChangeOwner}
-            onChangeDueDate={onChangeDueDate}
+            ownerLocal={ownerLocal}
+            setOwnerLocal={setOwnerLocal}
+            dueLocal={dueLocal}
+            setDueLocal={setDueLocal}
+            onSave={() => {
+              // Optimistically reflect in header via local state (already done above)
+              onChangeOwner(ownerLocal);
+              onChangeDueDate(dueLocal || null);
+              // Activity entry
+              const ownerTxt = ownerLocal ? `Owner: ${ownerLocal}` : "Owner cleared";
+              const dueTxt = dueLocal ? `Target: ${dueLocal}` : "Target cleared";
+              onAddNote(`Details updated — ${ownerTxt}; ${dueTxt}`);
+            }}
           />
         )}
       </div>
     </div>
   );
-}
-
-function Badge({ children }: { children: React.ReactNode }) {
-  return <span className="ml-2 rounded-full bg-slate-200 px-1.5 py-0.5 text-xs">{children}</span>;
 }
 
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -231,7 +256,7 @@ function StatusSelect({ value, onChange }: { value: CriteriaStatus; onChange: (v
         onClick={() => setOpen((v) => !v)}
       >
         <span className={"h-1.5 w-1.5 rounded-full " + dotForStatus(value)} />
-        {STATUS_LABEL[value as keyof typeof STATUS_LABEL] ?? String(value)}
+        {STATUS_LABEL[String(value)] ?? String(value)}
       </button>
       {open && (
         <div className="absolute right-0 z-20 mt-1 w-44 rounded-lg border bg-white p-1 shadow">
@@ -242,7 +267,7 @@ function StatusSelect({ value, onChange }: { value: CriteriaStatus; onChange: (v
               onClick={() => { onChange(s); setOpen(false); }}
             >
               <span className={"h-2 w-2 rounded-full " + dotForStatus(s)} />
-              {STATUS_LABEL[s as keyof typeof STATUS_LABEL] ?? String(s)}
+              {STATUS_LABEL[String(s)] ?? String(s)}
             </button>
           ))}
         </div>
@@ -356,6 +381,9 @@ function EvidenceTab({
   onPageChange: (n: number) => void;
   onDelete: (row: EvidenceRow) => void;
 }) {
+  // Track which evidence id is expanded for preview
+  const [openPreview, setOpenPreview] = useState<string | null>(null);
+
   return (
     <div className="grid gap-3">
       {/* Composer */}
@@ -385,7 +413,7 @@ function EvidenceTab({
             className="ml-auto rounded-md bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
             onClick={onSubmit}
             disabled={!narrative.trim()}
-            title={attachMode==="link" ? "You will be prompted for a URL" : attachMode==="file" ? "You will be prompted to choose a file" : "Add a narrative-only entry"}
+            title={attachMode==="link" ? "You’ll be prompted for a URL" : attachMode==="file" ? "You’ll be prompted to choose a file" : "Add a narrative-only entry"}
           >
             Add Evidence
           </button>
@@ -401,25 +429,90 @@ function EvidenceTab({
             <Pager page={page} pageCount={pageCount} onPageChange={onPageChange} />
           </div>
         </div>
+
         {evidence.length === 0 ? (
           <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-center text-slate-600">
             No evidence yet.
           </div>
         ) : (
           <ul className="grid gap-2">
-            {evidence.map((e) => (
-              <li key={e.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">
-                    {e.file ? (e.name || "File") : (e.url ? <a className="underline break-all" href={e.url} target="_blank" rel="noreferrer">{e.url}</a> : e.name)}
+            {evidence.map((e) => {
+              const canPreview = isImageUrl(e.url) || isPdfUrl(e.url);
+              const isOpen = openPreview === e.id;
+              return (
+                <li key={e.id} className="rounded-xl border border-slate-200 bg-white">
+                  <div className="flex items-start justify-between gap-3 p-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium break-all">
+                        {/* For links and files, always provide a View button (new tab) */}
+                        {e.file
+                          ? (e.name || "File")
+                          : (e.url ? e.url : e.name)}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {new Date(e.created_at).toLocaleString()} · {e.created_by}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {/* View in new tab for both link and file */}
+                      {e.url && (
+                     <a
+    href={e.url.startsWith("http") ? e.url : `https://${e.url.replace(/^https?:\/\//, "")}`}
+    target="_blank"
+    rel="noopener noreferrer"
+    className="text-xs underline text-slate-700"
+    title="Open in a new tab"
+    onClick={(ev) => ev.stopPropagation()}
+  >
+    View
+  </a>
+                      )}
+
+                      {/* Inline preview toggle (images / pdfs only) */}
+                      {canPreview && (
+                        <button
+                          className="text-xs underline"
+                          onClick={() => setOpenPreview(isOpen ? null : e.id)}
+                          title={isOpen ? "Hide preview" : "Show preview"}
+                        >
+                          {isOpen ? "Hide preview" : "Preview"}
+                        </button>
+                      )}
+
+                      <button
+                        className="text-xs underline text-slate-700"
+                        onClick={() => onDelete(e)}
+                        title="Remove evidence"
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
-                  <div className="text-xs text-slate-500">{new Date(e.created_at).toLocaleString()} · {e.created_by}</div>
-                </div>
-                <button className="text-xs underline text-slate-700" onClick={() => onDelete(e)}>
-                  Remove
-                </button>
-              </li>
-            ))}
+
+                  {/* Inline preview panel */}
+                  {isOpen && e.url && (
+                    <div className="border-t border-slate-100 p-3">
+                      {isImageUrl(e.url) && (
+                        <img
+                          src={e.url}
+                          alt={e.name || "evidence image"}
+                          className="max-h-[320px] w-auto rounded-md border border-slate-200"
+                          loading="lazy"
+                        />
+                      )}
+                      {isPdfUrl(e.url) && (
+                        <iframe
+                          src={e.url}
+                          className="h-[420px] w-full rounded-md border border-slate-200"
+                          title={e.name || "evidence pdf"}
+                        />
+                      )}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>
@@ -427,14 +520,25 @@ function EvidenceTab({
   );
 }
 
+
 function DetailsTab({
-  ownerEmail, dueISO, onChangeOwner, onChangeDueDate,
+  ownerLocal, setOwnerLocal, dueLocal, setDueLocal, onSave,
 }: {
-  ownerEmail: string;
-  dueISO: string;
-  onChangeOwner: (email: string) => void;
-  onChangeDueDate: (iso: string | null) => void;
+  ownerLocal: string;
+  setOwnerLocal: (v: string) => void;
+  dueLocal: string;
+  setDueLocal: (v: string) => void;
+  onSave: () => void;
 }) {
+  // dirty flag
+  const [pristineOwner, setPristineOwner] = useState(ownerLocal);
+  const [pristineDue, setPristineDue] = useState(dueLocal);
+
+  useEffect(() => { setPristineOwner(ownerLocal); }, [ownerLocal]);
+  useEffect(() => { setPristineDue(dueLocal); }, [dueLocal]);
+
+  const dirty = ownerLocal !== pristineOwner || dueLocal !== pristineDue;
+
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 grid gap-3 md:grid-cols-2">
       {/* Owner */}
@@ -442,8 +546,8 @@ function DetailsTab({
         <span className="text-slate-700">Owner</span>
         <input
           type="email"
-          value={ownerEmail ?? ""}
-          onChange={(e) => onChangeOwner(e.currentTarget.value)}
+          value={ownerLocal}
+          onChange={(e) => setOwnerLocal(e.currentTarget.value)}
           placeholder="name@acme.com"
           className="rounded-md border border-slate-300 px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900"
         />
@@ -455,12 +559,30 @@ function DetailsTab({
         <span className="text-slate-700">Target date</span>
         <input
           type="date"
-          value={dueISO ?? ""}
-          onChange={(e) => onChangeDueDate(e.currentTarget.value || null)}
+          value={dueLocal}
+          onChange={(e) => setDueLocal(e.currentTarget.value)}
           className="rounded-md border border-slate-300 px-3 py-2 outline-none focus:ring-2 focus:ring-slate-900"
         />
         <span className="text-xs text-slate-500">Optional target for completion.</span>
       </label>
+
+      <div className="md:col-span-2 flex items-center justify-end gap-2">
+        <button
+          className="rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
+          onClick={() => { setOwnerLocal(pristineOwner); setDueLocal(pristineDue); }}
+          disabled={!dirty}
+        >
+          Reset
+        </button>
+        <button
+          className="rounded-md bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
+          onClick={onSave}
+          disabled={!dirty}
+          title="Save owner and target date, and add an activity note"
+        >
+          Save
+        </button>
+      </div>
     </div>
   );
 }
