@@ -1,3 +1,4 @@
+// Projects.tsx (updated 'New Project' flow) — navigate to /projects/new instead of immediate insert
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "./lib/supabase";
@@ -39,13 +40,8 @@ export default function Projects() {
   const [criteria, setCriteria] = useState<Criterion[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
-  // Delete modal
   const [del, setDel] = useState<Project | null>(null);
 
-  // Create (quick) modal — optional; here we just create immediately
-  const [creating, setCreating] = useState(false);
-
-  // Load projects in org + their criteria for stats
   useEffect(() => {
     (async () => {
       if (!orgId) return;
@@ -82,7 +78,6 @@ export default function Projects() {
     })();
   }, [orgId]);
 
-  // Derived stats per project
   const statsByProject = useMemo(() => {
     const map = new Map<string, {
       total: number; done: number; inprog: number; delayed: number; caveat: number; notStarted: number; overdue: number;
@@ -109,30 +104,16 @@ export default function Projects() {
     return map;
   }, [projects, criteria]);
 
-  async function createProject() {
-    if (!orgId) return alert("Select an organisation first.");
-    setCreating(true);
-    try {
-      const { data: au } = await supabase.auth.getUser();
-      const uid = au?.user?.id || null;
-      const { data, error } = await supabase
-        .from("projects")
-        .insert({ org_id: orgId, name: "Untitled Project", status: "draft", created_by: uid })
-        .select("id")
-        .single();
-      if (error) throw error;
-      rememberLastProject(data!.id);
-      nav(`/projects/${data!.id}`);
-    } catch (e: any) {
-      alert(e.message || String(e));
-    } finally {
-      setCreating(false);
+  function goToNewProject() {
+    if (!orgId) {
+      alert("Select an organisation first.");
+      return;
     }
+    nav("/projects/new");
   }
 
   async function duplicateProject(p: Project) {
     try {
-      // 1) Create a new project
       const { data: au } = await supabase.auth.getUser();
       const uid = au?.user?.id || null;
       const { data: newP, error: pe } = await supabase
@@ -146,15 +127,12 @@ export default function Projects() {
         .single();
       if (pe) throw pe;
 
-      // 2) Copy criteria
       const { data: srcCrit } = await supabase
         .from("criteria")
         .select("template_id,org_id,title,description,category,severity,status,evidence_required,due_date,owner_email,ai_source,meta")
         .eq("project_id", p.id);
       if (srcCrit && srcCrit.length) {
-        const rows = srcCrit.map((r: any) => ({
-          ...r, project_id: newP!.id
-        }));
+        const rows = srcCrit.map((r: any) => ({ ...r, project_id: newP!.id }));
         await supabase.from("criteria").insert(rows);
       }
       rememberLastProject(newP!.id);
@@ -165,11 +143,7 @@ export default function Projects() {
   }
 
   async function reallyDeleteProject(p: Project) {
-    // Best-effort: delete criteria (will cascade evidence via FK if set),
-    // then delete project.
-    try {
-      await supabase.from("criteria").delete().eq("project_id", p.id);
-    } catch {}
+    try { await supabase.from("criteria").delete().eq("project_id", p.id); } catch {}
     const { error } = await supabase.from("projects").delete().eq("id", p.id);
     if (error) throw error;
     setProjects((prev) => prev.filter(x => x.id !== p.id));
@@ -180,9 +154,8 @@ export default function Projects() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Projects</h1>
         <button
-          onClick={createProject}
-          disabled={creating || !orgId}
-          className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-50"
+          onClick={goToNewProject}
+          className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-2 text-sm text-white hover:bg-slate-800"
         >
           <Plus size={16} /> New Project
         </button>
@@ -197,7 +170,6 @@ export default function Projects() {
         </div>
       )}
 
-      {/* Tiles */}
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {projects.map((p) => {
           const s = statsByProject.get(p.id) || { total:0, done:0, inprog:0, delayed:0, caveat:0, notStarted:0, overdue:0 };
@@ -219,9 +191,8 @@ export default function Projects() {
                 </button>
               </div>
 
-              {/* Mini dashboard */}
               <div className="rounded-xl border border-slate-200 p-3">
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center justify_between text-sm">
                   <span className="text-slate-600">Completion</span>
                   <span className="font-medium">{pct}%</span>
                 </div>
@@ -239,89 +210,44 @@ export default function Projects() {
                 </div>
               </div>
 
-              {/* Actions */}
               <div className="mt-3 grid grid-cols-2 gap-2">
-                <Link
-                  to={`/projects/${p.id}`}
-                  onClick={() => { rememberLastProject(p.id); }}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                  title="Open Checklist"
-                >
+                <Link to={`/projects/${p.id}`} onClick={() => { rememberLastProject(p.id); }}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50" title="Open Checklist">
                   <ClipboardCheck size={16} /> Checklist
                 </Link>
-
-                <Link
-                  to={`/projects/${p.id}/dashboard`}
-                  onClick={() => { rememberLastProject(p.id); }}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                  title="View Dashboard"
-                >
+                <Link to={`/projects/${p.id}/dashboard`} onClick={() => { rememberLastProject(p.id); }}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50" title="View Dashboard">
                   <PieChart size={16} /> Dashboard
                 </Link>
-
-                <Link
-                  to={`/projects/${p.id}/settings`}
-                  onClick={() => { rememberLastProject(p.id); }}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                  title="Project Settings"
-                >
+                <Link to={`/projects/${p.id}/settings`} onClick={() => { rememberLastProject(p.id); }}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50" title="Project Settings">
                   <Settings size={16} /> Settings
                 </Link>
-
-                <Link
-                  to={`/projects/${p.id}/allocate`}
-                  onClick={() => { rememberLastProject(p.id); }}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                  title="Allocate Criteria"
-                >
+                <Link to={`/projects/${p.id}/allocate`} onClick={() => { rememberLastProject(p.id); }}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50" title="Allocate Criteria">
                   <ListChecks size={16} /> Allocate
                 </Link>
-
-                <button
-                  onClick={() => duplicateProject(p)}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
-                  title="Duplicate project (copies criteria)"
-                >
+                <button onClick={() => duplicateProject(p)}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50" title="Duplicate project (copies criteria)">
                   <Copy size={16} /> Duplicate
                 </button>
-
-                <button
-                  onClick={() => setDel(p)}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 hover:bg-rose-100"
-                  title="Delete project"
-                >
+                <button onClick={() => setDel(p)}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 hover:bg-rose-100" title="Delete project">
                   <Trash2 size={16} /> Delete
                 </button>
               </div>
-
             </div>
           );
         })}
       </section>
 
-      {/* Delete modal */}
-      <ConfirmDialog
-        open={!!del}
-        title="Delete this project?"
-        message={
-          <div className="space-y-1">
-            <div>This will remove the project and its criteria.</div>
-            <div className="text-xs text-slate-500">{del?.name}</div>
-          </div>
-        }
-        confirmLabel="Delete"
-        cancelLabel="Cancel"
-        destructive
+      <ConfirmDialog open={!!del} title="Delete this project?"
+        message={<div className="space-y-1"><div>This will remove the project and its criteria.</div><div className="text-xs text-slate-500">{del?.name}</div></div>}
+        confirmLabel="Delete" cancelLabel="Cancel" destructive
         onCancel={() => setDel(null)}
         onConfirm={async () => {
           if (!del) return;
-          try {
-            await reallyDeleteProject(del);
-          } catch (e: any) {
-            alert(e.message || String(e));
-          } finally {
-            setDel(null);
-          }
+          try { await reallyDeleteProject(del); } catch (e: any) { alert(e.message || String(e)); } finally { setDel(null); }
         }}
       />
     </div>

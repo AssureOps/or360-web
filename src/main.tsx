@@ -15,7 +15,7 @@ import Templates from "./Templates";
 import AllocateCriteria from "./AllocateCriteria";
 import Projects from "./Projects"; // tile view
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import EvidencePage from "./EvidencePage";
+import NewProject from "./NewProject";  // add this near the top
 
 // 🔔 Wire global certificate export handler once
 import "./events/certificate";
@@ -33,6 +33,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 
               {/* Global pages */}
               <Route path="/projects" element={<Projects />} />
+			  <Route path="/projects/new" element={<NewProject />} />
               <Route path="/templates" element={<Templates />} />
               <Route path="/org-users" element={<OrgUsers />} />
 
@@ -42,7 +43,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                 <Route path="dashboard" element={<Dashboard />} />
                 <Route path="allocate" element={<AllocateCriteria />} />
                 <Route path="settings" element={<ProjectPage />} />
-				<Route path="evidence" element={<EvidencePage />} />
+
               </Route>
 
               {/* ✅ any other unknown path */}
