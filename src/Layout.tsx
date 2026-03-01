@@ -6,7 +6,8 @@ import { supabase } from "./lib/supabase";
 import {
   Menu, X, Plus, FolderKanban,
   Layers, Users, Building2,
-  PanelLeftClose, PanelLeftOpen
+  PanelLeftClose, PanelLeftOpen,
+  LogOut
 } from "lucide-react";
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -50,6 +51,17 @@ export default function Layout() {
     nav(`/projects/${data!.id}`);
   }
 
+
+
+async function signOut() {
+  try {
+    await supabase.auth.signOut();
+  } finally {
+    // Hard redirect ensures a clean state
+    window.location.href = "/login";
+  }
+}
+
   const linkBase =
     `${collapsed ? "px-2 justify-center" : "px-3"} py-2 rounded-lg text-sm flex items-center gap-2 transition-colors`;
   const active = "bg-slate-900 text-white";
@@ -69,12 +81,22 @@ export default function Layout() {
           <img src="/icon-32.png" alt="AssureOps" className="h-6 w-6" />
           <span className="text-sm font-semibold">AssureOps — OR-360</span>
         </div>
-        <button
-          onClick={createProjectAndGo}
-          className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
-        >
-          <Plus size={16} /> New Project
-        </button>
+<div className="flex items-center gap-2">
+  <button
+    onClick={signOut}
+    className="p-2 rounded-md border border-slate-200 bg-white hover:bg-slate-50"
+    title="Sign out"
+    aria-label="Sign out"
+  >
+    <LogOut size={16} />
+  </button>
+  <button
+    onClick={createProjectAndGo}
+    className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-3 py-1.5 text-sm text-white hover:bg-slate-800"
+  >
+    <Plus size={16} /> New Project
+  </button>
+</div>
       </div>
 
       {/* Backdrop */}
@@ -97,12 +119,22 @@ export default function Layout() {
                 <div className="text-sm font-semibold">OR-360</div>
               </div>
             </div>
-            <button
-              className="hidden lg:inline-flex p-2 rounded-md hover:bg-slate-100"
-              onClick={() => setCollapsed((v) => !v)}
-            >
-              {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-            </button>
+<div className="hidden lg:flex items-center gap-1">
+  <button
+    className="p-2 rounded-md hover:bg-slate-100"
+    onClick={() => setCollapsed((v) => !v)}
+    title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+  >
+    {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+  </button>
+  <button
+    className="p-2 rounded-md hover:bg-slate-100"
+    onClick={signOut}
+    title="Sign out"
+  >
+    <LogOut size={16} />
+  </button>
+</div>
           </div>
 
           {!collapsed && <SectionTitle>Global</SectionTitle>}

@@ -29,9 +29,7 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
     if (!sess?.session) {
       const email = import.meta.env.VITE_DEMO_EMAIL as string | undefined;
       const password = import.meta.env.VITE_DEMO_PASSWORD as string | undefined;
-      if (email && password) {
-        await supabase.auth.signInWithPassword({ email, password });
-      }
+      
     }
 
     // 1) Get current user id

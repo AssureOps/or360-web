@@ -6,6 +6,38 @@
   --brand-dark: #094c9a;     /* hover/darker */
   --brand-ring: rgba(11,93,187,.35);
 }
+@media print {
+  /* Hide app chrome */
+  nav, header, .no-print, .fixed, .sticky { display: none !important; }
+
+  /* Make sure dashboard fills the page */
+  #dashboard-root {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #0f172a !important; /* slate-900 */
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji" !important;
+  }
+
+  /* Cards & borders */
+  .print-card, .print-kpi {
+    break-inside: avoid !important; /* prevent split across pages */
+    border: 1px solid #e2e8f0 !important; /* slate-200 */
+    box-shadow: none !important;
+  }
+
+  /* Tables */
+  table { page-break-inside: auto; }
+  tr    { page-break-inside: avoid; page-break-after: auto; }
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+
+  /* Page size & margins */
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+}
 
 .btn{ @apply inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium; }
 .btn-primary{ background: var(--brand); color: #fff; }

@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
-import { Link } from "react-router-dom";
 import {
   PieChart, Pie, Cell, Tooltip as RTooltip, Legend as RLegend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer
 } from "recharts";
-import { ChevronRight } from "lucide-react";
 
-/** Types (aligned with App.tsx) */
+
+
+
 type Project = { id: string; name: string; status: string; created_at: string };
 type Criterion = {
   id: string;
@@ -34,13 +34,12 @@ type Evidence = {
   meta?: any;
 };
 
-/** Helpers */
-const COLORS = ["#d1d5db", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"]; // gray, amber, green, red, purple
+const COLORS = ["#475569", "#0ea5e9", "#10b981", "#ef4444", "#8b5cf6"];
 
 function weekKey(d: Date) {
   const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const day = date.getUTCDay() || 7; // 1..7
-  date.setUTCDate(date.getUTCDate() - day + 1); // Monday of this week
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() - day + 1);
   return date.toISOString().slice(0, 10);
 }
 
@@ -52,7 +51,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Demo auth (same as App.tsx)
+  const [weeks, setWeeks] = useState<4 | 8 | 12>(8);
+  const [issueFilter, setIssueFilter] = useState<"all" | "overdue" | "caveat">("all");
+
   useEffect(() => {
     (async () => {
       const { data: sess } = await supabase.auth.getSession();
@@ -62,7 +63,6 @@ export default function Dashboard() {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) { setErr(`Sign-in failed: ${error.message}`); return; }
       }
-      // load projects
       const { data: projs, error: pErr } = await supabase
         .from("projects")
         .select("id,name,status,created_at")
@@ -72,14 +72,11 @@ export default function Dashboard() {
       setProjects(projs ?? []);
       if (!activeProjectId && projs && projs.length > 0) setActiveProjectId(projs[0].id);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load criteria + evidence for selected project
   useEffect(() => {
     if (!activeProjectId) return;
-    setLoading(true);
-    setErr(null);
+    setLoading(true); setErr(null);
     (async () => {
       const { data: crits, error: cErr } = await supabase
         .from("criteria")
@@ -104,7 +101,6 @@ export default function Dashboard() {
     })();
   }, [activeProjectId]);
 
-  /** Derived stats */
   const stats = useMemo(() => {
     const all = criteria ?? [];
     const total = all.length;
@@ -149,196 +145,212 @@ export default function Dashboard() {
       else row.Files += 1;
       map.set(wk, row);
     });
-    return Array.from(map.values()).sort((a, b) => a.week.localeCompare(b.week));
-  }, [evidence]);
+    const all = Array.from(map.values()).sort((a, b) => a.week.localeCompare(b.week));
+    return all.slice(-weeks);
+  }, [evidence, weeks]);
 
-  const overdueItems = useMemo(() => {
-    return (criteria ?? [])
+
+  const issues = useMemo(() => {
+    const over = (criteria ?? [])
       .filter(c => c.due_date && new Date(c.due_date) < new Date() && c.status !== "done")
-      .sort((a, b) => (a.due_date ?? "").localeCompare(b.due_date ?? ""));
-  }, [criteria]);
-
-  const caveatItems = useMemo(() => {
-    return (criteria ?? [])
+      .map(c => ({ kind: "overdue" as const, ...c }));
+    const cav = (criteria ?? [])
       .filter(c => c.status === "caveat")
-      .sort((a, b) => (a.category ?? "").localeCompare(b.category ?? "") || a.title.localeCompare(b.title));
-  }, [criteria]);
+      .map(c => ({ kind: "caveat" as const, ...c }));
+    let rows = [...over, ...cav].sort((a, b) =>
+      (a.kind === "overdue" ? (a.due_date ?? "") : a.title)
+        .toString()
+        .localeCompare((b.kind === "overdue" ? (b.due_date ?? "") : b.title).toString())
+    );
+    if (issueFilter !== "all") rows = rows.filter(r => r.kind === issueFilter);
+    return rows;
+  }, [criteria, issueFilter]);
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <header className="mb-2 space-y-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <select
-              className="rounded-xl border border-slate-200 px-3 py-2"
-              value={activeProjectId ?? ""}
-              onChange={(e) => setActiveProjectId(e.target.value)}
-            >
-              {projects?.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+    <div className="p-4 sm:p-6 space-y-4" data-project-name={
+      (projects?.find(p => p.id === activeProjectId)?.name) || undefined
+    }>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <select
+            className="rounded-xl border border-slate-200 px-3 py-2"
+            value={activeProjectId ?? ""}
+            onChange={(e) => setActiveProjectId(e.target.value)}
+          >
+            {projects?.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500">
+            <span>Status:</span>
+            <span className="rounded-full border border-slate-200 px-2 py-0.5">
+              {projects?.find(p => p.id === activeProjectId)?.status ?? "-"}
+            </span>
           </div>
         </div>
-        {err && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-700">{err}</div>}
+        <div className="flex items-center gap-2">
+          <div className="hidden sm:flex items-center gap-1 text-xs text-slate-600">
+            <span>Activity range:</span>
+            {[4,8,12].map(w => (
+              <button
+                key={w}
+                onClick={() => setWeeks(w as 4|8|12)}
+                className={`rounded-full border px-2 py-0.5 ${weeks===w ? "bg-slate-900 text-white border-slate-900":"bg-white text-slate-700 border-slate-300"}`}
+              >
+                {w}w
+              </button>
+            ))}
+          </div>
+<button
+  onClick={() => {
+    // Optional: add a quick class to stabilize before print
+    document.body.classList.add("export-safe"); // if you want any extra tweaks
+    setTimeout(() => window.print(), 0);
+    // Remove the class after a moment (Chrome fires print async)
+    setTimeout(() => document.body.classList.remove("export-safe"), 2000);
+  }}
+  className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm hover:bg-slate-50"
+  title="Export to PDF"
+>
+  Export PDF
+</button>
+        </div>
       </header>
 
-      {/* KPI Cards */}
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="text-sm text-slate-500">Completion</div>
-          <div className="mt-1 text-3xl font-bold">{stats.pct}%</div>
-          <div className="mt-2 h-2 w-full rounded-full bg-slate-100">
-            <div className="h-2 rounded-full bg-green-500" style={{ width: `${stats.pct}%` }} />
-          </div>
-          <div className="mt-2 text-xs text-slate-600">{stats.done}/{stats.total} done</div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="text-sm text-slate-500">Total Criteria</div>
-          <div className="mt-1 text-3xl font-bold">{stats.total}</div>
-          <div className="mt-2 text-xs text-slate-600">Tracked in this project</div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="text-sm text-slate-500">Overdue</div>
-          <div className="mt-1 text-3xl font-bold text-red-600">{stats.overdue}</div>
-          <div className="mt-2 text-xs text-slate-600">Due date in the past</div>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="text-sm text-slate-500">Caveats</div>
-          <div className="mt-1 text-3xl font-bold text-purple-700">{stats.caveat}</div>
-          <div className="mt-2 text-xs text-slate-600">Require attention</div>
-        </div>
-      </section>
+      <div id="dashboard-root" className="space-y-4">
+        <section className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <Kpi title="Completion" value={`${stats.pct}%`} accent />
+          <Kpi title="Total" value={stats.total} />
+          <Kpi title="In Progress" value={stats.inprog} />
+          <Kpi title="Done" value={stats.done} />
+          <Kpi title="Overdue" value={stats.overdue} warn />
+          <Kpi title="Caveats" value={stats.caveat} violet />
+        </section>
 
-      {/* Charts */}
-      <section className="grid gap-3 lg:grid-cols-5">
-        {/* Status Distribution */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 lg:col-span-2">
-          <div className="mb-2 text-sm font-semibold text-slate-700">Status Distribution</div>
-          <ResponsiveContainer width="100%" height={260}>
-            <PieChart>
-              <Pie data={statusData} dataKey="value" nameKey="name" outerRadius={90} label>
-                {statusData.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
-              </Pie>
-              <RTooltip />
-              <RLegend />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
+        <section className="grid gap-3 lg:grid-cols-5">
+          <Card title="Status Distribution" className="lg:col-span-2">
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={statusData} dataKey="value" nameKey="name" outerRadius={80} label>
+                  {statusData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                </Pie>
+                <RTooltip />
+                <RLegend />
+              </PieChart>
+            </ResponsiveContainer>
+          </Card>
+          <Card title="Completion by Category" className="lg:col-span-3">
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={byCategory}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="category" />
+                <YAxis unit="%" />
+                <RTooltip />
+                <Bar dataKey="pct" name="% Complete" />
+              </BarChart>
+            </ResponsiveContainer>
+          </Card>
+        </section>
 
-        {/* Completion by Category */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 lg:col-span-3">
-          <div className="mb-2 text-sm font-semibold text-slate-700">Completion by Category</div>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={byCategory}>
+        <Card title={`Evidence Activity (last ${weeks}w)`}>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={evidenceByWeek}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="category" />
-              <YAxis unit="%" />
+              <XAxis dataKey="week" />
+              <YAxis allowDecimals={false} />
               <RTooltip />
-              <Bar dataKey="pct" name="% Complete" />
+              <Bar dataKey="Notes" />
+              <Bar dataKey="Links" />
+              <Bar dataKey="Files" />
             </BarChart>
           </ResponsiveContainer>
-        </div>
-      </section>
+        </Card>
 
-      {/* Evidence Activity */}
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="mb-2 text-sm font-semibold text-slate-700">Evidence Activity by Week</div>
-        <ResponsiveContainer width="100%" height={280}>
-          <BarChart data={evidenceByWeek}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="week" />
-            <YAxis allowDecimals={false} />
-            <RTooltip />
-            <RLegend content={() => null} />
-            <Bar dataKey="Notes" />
-            <Bar dataKey="Links" />
-            <Bar dataKey="Files" />
-          </BarChart>
-        </ResponsiveContainer>
-      </section>
-
-      {/* Tables */}
-      <section className="grid gap-3 lg:grid-cols-2">
-        {/* Overdue */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-sm font-semibold text-slate-700">Overdue Items</div>
-            <span className="text-xs text-slate-500">{overdueItems.length}</span>
-          </div>
-          {overdueItems.length === 0 ? (
-            <div className="text-sm text-slate-500">No overdue items 🎉</div>
+        <Card
+          title="Attention Needed"
+          right={
+            <div className="flex items-center gap-1 text-xs text-slate-600">
+              <span>Show:</span>
+              {(["all","overdue","caveat"] as const).map(key => (
+                <button
+                  key={key}
+                  onClick={() => setIssueFilter(key)}
+                  className={`rounded-full border px-2 py-0.5 ${
+                    issueFilter===key ? "bg-slate-900 text-white border-slate-900":"bg-white text-slate-700 border-slate-300"
+                  }`}
+                >
+                  {key === "all" ? "All" : key[0].toUpperCase()+key.slice(1)}
+                </button>
+              ))}
+            </div>
+          }
+        >
+          {issues.length === 0 ? (
+            <div className="text-sm text-slate-500">No issues 🎉</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-left text-sm">
                 <thead className="text-xs text-slate-500">
                   <tr>
+                    <th className="px-2 py-1">Type</th>
                     <th className="px-2 py-1">Title</th>
+                    <th className="px-2 py-1">Category</th>
                     <th className="px-2 py-1">Owner</th>
-                    <th className="px-2 py-1">Due</th>
+                    <th className="px-2 py-1">Due / Reason</th>
                     <th className="px-2 py-1">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {overdueItems.map(o => (
-                    <tr key={o.id} className="align-top">
+                  {issues.map((r) => (
+                    <tr key={r.id} className="align-top">
                       <td className="px-2 py-2">
-                        <div className="flex items-start gap-2">
-                          <ChevronRight size={14} className="text-slate-400 mt-0.5" />
-                          <div>
-                            <Link className="font-medium text-slate-800 underline" to={`/projects/${activeProjectId}#c-${o.id}`}>{o.title}</Link>
-                            <div className="text-xs text-slate-500">{o.category ?? "Uncategorised"}</div>
-                          </div>
-                        </div>
+                        <span className={`rounded-full border px-2 py-0.5 text-xs ${
+                          r.kind === "overdue" ? "border-red-200 bg-red-50 text-red-700" : "border-violet-200 bg-violet-50 text-violet-700"
+                        }`}>
+                          {r.kind === "overdue" ? "Overdue" : "Caveat"}
+                        </span>
                       </td>
-                      <td className="px-2 py-2">{o.owner_email ?? "-"}</td>
-                      <td className="px-2 py-2 text-red-600">{o.due_date ?? "-"}</td>
-                      <td className="px-2 py-2">{o.status}</td>
+                      <td className="px-2 py-2">{r.title}</td>
+                      <td className="px-2 py-2">{r.category ?? "-"}</td>
+                      <td className="px-2 py-2">{r.owner_email ?? "-"}</td>
+                      <td className="px-2 py-2">
+                        {r.kind === "overdue" ? (r.due_date ?? "-") : (r.caveat_reason ?? "-")}
+                      </td>
+                      <td className="px-2 py-2">{r.status}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
-        </div>
+        </Card>
 
-        {/* Caveats */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-sm font-semibold text-slate-700">Caveats</div>
-            <span className="text-xs text-slate-500">{caveatItems.length}</span>
-          </div>
-          {caveatItems.length === 0 ? (
-            <div className="text-sm text-slate-500">No caveats 🎉</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="text-xs text-slate-500">
-                  <tr>
-                    <th className="px-2 py-1">Title</th>
-                    <th className="px-2 py-1">Category</th>
-                    <th className="px-2 py-1">Owner</th>
-                    <th className="px-2 py-1">Reason</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {caveatItems.map(c => (
-                    <tr key={c.id} className="align-top">
-                      <td className="px-2 py-2"><Link className="underline" to={`/projects/${activeProjectId}#c-${c.id}`}>{c.title}</Link></td>
-                      <td className="px-2 py-2">{c.category ?? "-"}</td>
-                      <td className="px-2 py-2">{c.owner_email ?? "-"}</td>
-                      <td className="px-2 py-2">{c.caveat_reason ?? "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </section>
-
-      {loading && <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">Loading…</div>}
+        {loading && <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">Loading…</div>}
+        {err && <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-700">{err}</div>}
+      </div>
     </div>
+  );
+}
+
+function Kpi({ title, value, accent, warn, violet }: { title: string; value: string | number; accent?: boolean; warn?: boolean; violet?: boolean }) {
+  const cls = accent ? "border-slate-300" : warn ? "border-red-200" : violet ? "border-violet-200" : "border-slate-200";
+  const valCls = warn ? "text-red-600" : violet ? "text-violet-700" : "text-slate-800";
+  return (
+    <div className={`rounded-xl border ${cls} bg-white p-3`}>
+      <div className="text-xs text-slate-500">{title}</div>
+      <div className={`mt-1 text-2xl font-bold ${valCls}`}>{value}</div>
+    </div>
+  );
+}
+
+function Card({ title, right, children, className = "" }: { title: string; right?: React.ReactNode; children: React.ReactNode; className?: string }) {
+  return (
+    <section className={`rounded-xl border border-slate-200 bg-white p-3 ${className}`}>
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-sm font-semibold text-slate-700">{title}</div>
+        <div className="text-xs">{right}</div>
+      </div>
+      {children}
+    </section>
   );
 }
