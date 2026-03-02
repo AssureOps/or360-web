@@ -26,10 +26,13 @@ export function OrgProvider({ children }: { children: React.ReactNode }) {
   const refresh = async () => {
     // 0) Ensure we have a session (auto sign-in using demo creds if provided)
     const { data: sess } = await supabase.auth.getSession();
-    if (!sess?.session) {
+      if (!sess?.session) {
       const email = import.meta.env.VITE_DEMO_EMAIL as string | undefined;
       const password = import.meta.env.VITE_DEMO_PASSWORD as string | undefined;
-      
+
+      if (email && password) {
+        await supabase.auth.signInWithPassword({ email, password });
+      }
     }
 
     // 1) Get current user id

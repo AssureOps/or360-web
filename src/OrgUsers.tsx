@@ -134,8 +134,9 @@ useEffect(() => {
     });
 
     if (error) {
-  // @ts-expect-error Supabase hides this in typings
-  const ctx = error.context;
+
+const ctx = (error as any).context;
+
 
   let parsed: any = null;
 
@@ -235,6 +236,9 @@ useEffect(() => {
   <div className="text-xs text-slate-500">
     Signed in as: <span className="font-medium text-slate-700">{me.email ?? "unknown"}</span>
   </div>
+  <div className="text-sm opacity-70 mb-2">
+  Signed in as: {meEmail ?? "(unknown)"}
+</div>
   <div className="text-xs text-slate-500">
     My role:{" "}
     <span className="font-medium text-slate-700">
