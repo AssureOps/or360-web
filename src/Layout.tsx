@@ -164,7 +164,7 @@ async function signOut() {
               <span className={collapsed ? "hidden" : ""}>Org Users</span>
             </NavLink>
             <NavLink
-              to="/orgs"
+              to="/organisations"
               onClick={() => setOpen(false)}
               className={({ isActive }) => `${linkBase} ${isActive ? active : idle}`}
             >

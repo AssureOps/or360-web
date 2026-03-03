@@ -22,6 +22,8 @@ export type Criterion = {
   caveat_reason?: string | null;
   meta?: any;
   description?: string | null;
+  section_order?: number | null;
+item_order?: number | null;
 };
 
 export type Note = {
@@ -169,11 +171,11 @@ export default function App() {
     (async () => {
       const { data: crits, error } = await supabase
         .from("criteria")
-        .select(
-          "id,project_id,title,status,category,description,meta,owner_email,due_date,caveat_reason,created_at,updated_at"
-        )
-        .eq("project_id", activeProjectId)
-        .order("title", { ascending: true });
+.select("id,project_id,title,status,category,section_order,item_order,description,meta,owner_email,due_date,caveat_reason,created_at,updated_at")
+.eq("project_id", activeProjectId)
+.order("section_order", { ascending: true, nullsFirst: false })
+.order("item_order", { ascending: true, nullsFirst: false })
+.order("title", { ascending: true });
       if (error) {
         setErr(error.message);
         setLoading(false);
@@ -217,16 +219,40 @@ export default function App() {
     });
   }, [criteria, search]);
 
-  const grouped = useMemo(() => {
-    const acc: Record<string, Criterion[]> = {};
-    for (const c of filtered) {
-      const k = c.category ?? "Uncategorised";
-      (acc[k] ||= []).push(c);
-    }
-    return acc;
-  }, [filtered]);
+const groupedList = useMemo(() => {
+  const map = new Map<
+    string,
+    { section_order: number; items: Criterion[] }
+  >();
 
-  const categories = useMemo(() => Object.keys(grouped).sort(), [grouped]);
+  for (const c of filtered) {
+    const cat = c.category ?? "Uncategorised";
+    const so = c.section_order ?? 999;
+    if (!map.has(cat)) map.set(cat, { section_order: so, items: [] });
+
+    const g = map.get(cat)!;
+    g.section_order = Math.min(g.section_order, so);
+    g.items.push(c);
+  }
+
+  const groups = Array.from(map.entries()).map(([category, v]) => ({
+    category,
+    section_order: v.section_order,
+    items: v.items.sort(
+      (a, b) =>
+        (a.item_order ?? 9999) - (b.item_order ?? 9999) ||
+        a.title.localeCompare(b.title)
+    ),
+  }));
+
+  groups.sort(
+    (a, b) => a.section_order - b.section_order || a.category.localeCompare(b.category)
+  );
+
+  return groups;
+}, [filtered]);
+
+
 
   const stats = useMemo(() => {
     const all = criteria ?? [];
@@ -578,14 +604,15 @@ export default function App() {
       </div>
 
       {loading && <EmptyState message="Loading criteria…" />}
-      {!loading && categories.length === 0 && (
-        <EmptyState message="No criteria match." />
-      )}
+{!loading && groupedList.length === 0 && (
+  <EmptyState message="No criteria match." />
+)}
 
       {/* Categories */}
       <div className="space-y-6">
-        {categories.map((cat) => {
-          const items = grouped[cat];
+       {groupedList.map((g) => {
+  const cat = g.category;
+  const items = g.items;
           const doneCount = items.filter((i) => i.status === "done").length;
           const inprogCount = items.filter((i) => i.status === "in_progress").length;
           const delayedCount = items.filter((i) => i.status === "delayed").length;

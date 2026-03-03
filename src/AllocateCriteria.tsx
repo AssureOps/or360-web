@@ -3,8 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./lib/supabase";
 import { useOrg } from "./OrgContext";
 import {
-  ListChecks, Filter, CheckCircle2,
-  ChevronDown, ChevronRight, X, CalendarDays, Trash2
+  ListChecks,
+  Filter,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  X,
+  CalendarDays,
+  Trash2,
 } from "lucide-react";
 
 /** Types — aligned with your schema */
@@ -21,6 +27,8 @@ type CriteriaTemplate = {
   title: string;
   description: string | null;
   category: string | null;
+  section_order: number | null;
+  item_order: number | null;
   severity: "low" | "med" | "high" | string;
   default_status: string;
   evidence_required: boolean;
@@ -39,6 +47,11 @@ type DraftRow = {
   title: string;
   description: string | null;
   category: string | null;
+
+  // IMPORTANT: persist ordering on criteria rows
+  section_order: number | null;
+  item_order: number | null;
+
   severity: string;
   status: string;
   evidence_required: boolean;
@@ -91,6 +104,7 @@ export default function AllocateCriteria() {
       }
       setLoading(false);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
   // Load criteria templates (global + org)
@@ -98,15 +112,21 @@ export default function AllocateCriteria() {
     (async () => {
       if (!orgId) return;
       setLoading(true);
-            const { data } = await supabase
+
+      const { data } = await supabase
         .from("criteria_templates")
-        .select("id,title,description,category,severity,default_status,evidence_required,version,is_active,org_id,meta,default_due_offset_days")
-        .order("category", { ascending: true })
+        .select(
+          "id,title,description,category,section_order,item_order,severity,default_status,evidence_required,version,is_active,org_id,meta,default_due_offset_days"
+        )
+        .order("section_order", { ascending: true, nullsFirst: false })
+        .order("item_order", { ascending: true, nullsFirst: false })
         .order("title", { ascending: true });
+
       // Accept both boolean true and string 'true'
       const rows = (data || [])
-        .filter((t: any) => (t.is_active === true || t.is_active === 'true'))
+        .filter((t: any) => t.is_active === true || t.is_active === "true")
         .filter((t: any) => !t.org_id || t.org_id === orgId);
+
       setTemplates(rows as CriteriaTemplate[]);
       setLoading(false);
     })();
@@ -114,27 +134,39 @@ export default function AllocateCriteria() {
 
   // Refresh existing template_ids for the chosen project
   async function refreshExisting() {
-    if (!projectId) { setExisting(new Set()); return; }
-    const { data } = await supabase
-      .from("criteria")
-      .select("template_id")
-      .eq("project_id", projectId);
+    if (!projectId) {
+      setExisting(new Set());
+      return;
+    }
+    const { data } = await supabase.from("criteria").select("template_id").eq("project_id", projectId);
     const ids = new Set<string>();
-    (data || []).forEach((r: any) => { if (r.template_id) ids.add(r.template_id); });
+    (data || []).forEach((r: any) => {
+      if (r.template_id) ids.add(r.template_id);
+    });
     setExisting(ids);
   }
-  useEffect(() => { refreshExisting(); }, [projectId]);
+  useEffect(() => {
+    refreshExisting();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   // Filters
   const categories = useMemo(() => {
-    const set = new Set((templates || []).map(t => t.category || "Uncategorised"));
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    const map = new Map<string, number>(); // category -> min section_order
+    for (const t of templates) {
+      const cat = t.category || "Uncategorised";
+      const so = t.section_order ?? 999;
+      map.set(cat, Math.min(map.get(cat) ?? 999, so));
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+      .map(([cat]) => cat);
   }, [templates]);
 
   // Always show everything (user can select either add or remove)
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return templates.filter(t => {
+    return templates.filter((t) => {
       if (categoryFilter !== "all") {
         const cat = (t.category || "Uncategorised").toLowerCase();
         if (cat !== categoryFilter.toLowerCase()) return false;
@@ -145,14 +177,31 @@ export default function AllocateCriteria() {
     });
   }, [templates, search, categoryFilter]);
 
-  // Group by category
-  const grouped = useMemo(() => {
-    const map: Record<string, CriteriaTemplate[]> = {};
-    filtered.forEach(t => {
-      const k = t.category || "Uncategorised";
-      (map[k] ||= []).push(t);
-    });
-    return map;
+  // Group by category (ordered by section_order then item_order)
+  const groupedList = useMemo(() => {
+    const map = new Map<string, { section_order: number; items: CriteriaTemplate[] }>();
+
+    for (const t of filtered) {
+      const cat = t.category || "Uncategorised";
+      const so = t.section_order ?? 999;
+      if (!map.has(cat)) map.set(cat, { section_order: so, items: [] });
+
+      const g = map.get(cat)!;
+      g.section_order = Math.min(g.section_order, so);
+      g.items.push(t);
+    }
+
+    const groups = Array.from(map.entries()).map(([category, v]) => ({
+      category,
+      section_order: v.section_order,
+      items: v.items.sort(
+        (a, b) =>
+          (a.item_order ?? 9999) - (b.item_order ?? 9999) || a.title.localeCompare(b.title)
+      ),
+    }));
+
+    groups.sort((a, b) => a.section_order - b.section_order || a.category.localeCompare(b.category));
+    return groups;
   }, [filtered]);
 
   // Checkbox logic:
@@ -160,14 +209,14 @@ export default function AllocateCriteria() {
   // - If template IS existing: toggles remove
   function toggleForTemplate(id: string) {
     if (existing.has(id)) {
-      setSelectedToRemove(prev => {
+      setSelectedToRemove((prev) => {
         const next = new Set(prev);
         if (next.has(id)) next.delete(id);
         else next.add(id);
         return next;
       });
     } else {
-      setSelectedToAdd(prev => {
+      setSelectedToAdd((prev) => {
         const next = new Set(prev);
         if (next.has(id)) next.delete(id);
         else next.add(id);
@@ -203,21 +252,35 @@ export default function AllocateCriteria() {
     if (!projectId || !orgId) return [];
     const p = projectMap[projectId];
     const nowIso = new Date().toISOString();
+
     return templates
-      .filter(t => selectedToAdd.has(t.id) && !existing.has(t.id))
-      .map(t => ({
+      .filter((t) => selectedToAdd.has(t.id) && !existing.has(t.id))
+      .map((t) => ({
         template_id: t.id,
         project_id: projectId,
         org_id: p.org_id,
         title: t.title,
         description: t.description,
         category: t.category,
+
+        // IMPORTANT: persist ordering on the project criteria row (used by checklist ordering)
+        section_order: t.section_order ?? null,
+        item_order: t.item_order ?? null,
+
         severity: t.severity || "med",
         status: t.default_status || "not_started",
         evidence_required: t.evidence_required ?? true,
         due_date: computeDueDate(t, p),
         ai_source: { source: "template", created_at: nowIso, template_version: t.version ?? 1 },
-        meta: t.meta ?? {}
+
+        // Keep provenance + standard fields for later backfills / reporting
+        meta: {
+          ...(t.meta ?? {}),
+          template_id: t.id,
+          template_version: t.version ?? 1,
+          severity: t.severity ?? "med",
+          evidence_required: t.evidence_required ?? true,
+        },
       }));
   }
 
@@ -248,8 +311,8 @@ export default function AllocateCriteria() {
   // Remove drawer helpers
   const removeList = useMemo(() => {
     const byId: Record<string, CriteriaTemplate> = {};
-    templates.forEach(t => byId[t.id] = t);
-    return Array.from(selectedToRemove).map(id => byId[id]).filter(Boolean);
+    templates.forEach((t) => (byId[t.id] = t));
+    return Array.from(selectedToRemove).map((id) => byId[id]).filter(Boolean);
   }, [selectedToRemove, templates]);
 
   function openRemoveDrawer() {
@@ -279,7 +342,7 @@ export default function AllocateCriteria() {
 
   const addCount = selectedToAdd.size;
   const removeCount = selectedToRemove.size;
-  const remainingAddCount = filtered.filter(t => !existing.has(t.id)).length;
+  const remainingAddCount = filtered.filter((t) => !existing.has(t.id)).length;
 
   return (
     <div className="p-6 space-y-6">
@@ -297,7 +360,11 @@ export default function AllocateCriteria() {
             value={projectId ?? ""}
             onChange={(e) => setProjectId(e.target.value)}
           >
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
           </select>
         </div>
       </header>
@@ -323,7 +390,11 @@ export default function AllocateCriteria() {
               onChange={(e) => setCategoryFilter(e.target.value)}
             >
               <option value="all">All</option>
-              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              {categories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -386,11 +457,11 @@ export default function AllocateCriteria() {
 
       {/* Templates list */}
       <section className="space-y-4">
-        {Object.keys(grouped).sort().map(cat => (
+        {groupedList.map((g) => (
           <CategoryBlock
-            key={cat}
-            title={cat}
-            items={grouped[cat]}
+            key={g.category}
+            title={g.category}
+            items={g.items}
             existing={existing}
             selectedToAdd={selectedToAdd}
             selectedToRemove={selectedToRemove}
@@ -398,9 +469,15 @@ export default function AllocateCriteria() {
           />
         ))}
 
-        {loading && <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">Loading…</div>}
+        {loading && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">
+            Loading…
+          </div>
+        )}
         {!loading && filtered.length === 0 && (
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">No templates match.</div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">
+            No templates match.
+          </div>
         )}
       </section>
 
@@ -414,7 +491,11 @@ export default function AllocateCriteria() {
                 <ListChecks size={18} />
                 <div className="text-sm font-semibold">Review &amp; Add</div>
               </div>
-              <button className="rounded-md p-1 hover:bg-slate-100" onClick={() => setAddDrawerOpen(false)} aria-label="Close">
+              <button
+                className="rounded-md p-1 hover:bg-slate-100"
+                onClick={() => setAddDrawerOpen(false)}
+                aria-label="Close"
+              >
                 <X size={18} />
               </button>
             </div>
@@ -436,7 +517,8 @@ export default function AllocateCriteria() {
                     <div className="min-w-0">
                       <div className="font-medium">{row.title}</div>
                       <div className="mt-0.5 text-xs text-slate-600">
-                        {(row.category ?? "Uncategorised")} · {String(row.severity).toUpperCase()} · Status: {row.status}
+                        {(row.category ?? "Uncategorised")} · {String(row.severity).toUpperCase()} · Status:{" "}
+                        {row.status}
                       </div>
                     </div>
                     <button
@@ -465,7 +547,9 @@ export default function AllocateCriteria() {
                         value={row.due_date ?? ""}
                         onChange={(e) => {
                           const v = e.target.value || null;
-                          setDraftRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, due_date: v } : r)));
+                          setDraftRows((prev) =>
+                            prev.map((r, idx) => (idx === i ? { ...r, due_date: v } : r))
+                          );
                         }}
                       />
                     </label>
@@ -477,7 +561,9 @@ export default function AllocateCriteria() {
                         checked={row.evidence_required}
                         onChange={(e) => {
                           const v = e.target.checked;
-                          setDraftRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, evidence_required: v } : r)));
+                          setDraftRows((prev) =>
+                            prev.map((r, idx) => (idx === i ? { ...r, evidence_required: v } : r))
+                          );
                         }}
                       />
                       <span className="text-xs text-slate-600">Evidence required</span>
@@ -491,7 +577,10 @@ export default function AllocateCriteria() {
               <div className="flex items-center justify-between">
                 <div className="text-sm text-slate-600">{draftRows.length} item(s) ready</div>
                 <div className="flex items-center gap-2">
-                  <button className="rounded-md border border-slate-300 px-3 py-2 text-sm" onClick={() => setAddDrawerOpen(false)}>
+                  <button
+                    className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    onClick={() => setAddDrawerOpen(false)}
+                  >
                     Cancel
                   </button>
                   <button
@@ -512,75 +601,75 @@ export default function AllocateCriteria() {
       {removeDrawerOpen && (
         <>
           <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setRemoveDrawerOpen(false)} />
-        <div className="fixed inset-y-0 right-0 z-50 w-full max-w-xl bg-white shadow-2xl">
-          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Trash2 size={18} />
-              <div className="text-sm font-semibold">Review &amp; Remove</div>
-            </div>
-            <button className="rounded-md p-1 hover:bg-slate-100" onClick={() => setRemoveDrawerOpen(false)} aria-label="Close">
-              <X size={18} />
-            </button>
-          </div>
-
-          <div className="px-4 py-3 text-sm text-slate-600">
-            {removeList.length} item(s) will be removed from this project.
-          </div>
-
-          <div className="grid max-h-[70vh] gap-3 overflow-y-auto px-4 pb-20">
-            {removeList.length === 0 && (
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-center text-slate-600">
-                Nothing selected for removal.
+          <div className="fixed inset-y-0 right-0 z-50 w-full max-w-xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <Trash2 size={18} />
+                <div className="text-sm font-semibold">Review &amp; Remove</div>
               </div>
-            )}
+              <button
+                className="rounded-md p-1 hover:bg-slate-100"
+                onClick={() => setRemoveDrawerOpen(false)}
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
 
-            {removeList.map((t) => (
-              <div key={t.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="font-medium">{t.title}</div>
-                    <div className="mt-0.5 text-xs text-slate-600">
-                      {(t.category ?? "Uncategorised")} · {String(t.severity || "med").toUpperCase()}
+            <div className="px-4 py-3 text-sm text-slate-600">{removeList.length} item(s) will be removed from this project.</div>
+
+            <div className="grid max-h-[70vh] gap-3 overflow-y-auto px-4 pb-20">
+              {removeList.length === 0 && (
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-center text-slate-600">
+                  Nothing selected for removal.
+                </div>
+              )}
+
+              {removeList.map((t) => (
+                <div key={t.id} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium">{t.title}</div>
+                      <div className="mt-0.5 text-xs text-slate-600">
+                        {(t.category ?? "Uncategorised")} · {String(t.severity || "med").toUpperCase()}
+                      </div>
+                      {t.description && <div className="mt-1 text-sm text-slate-700 line-clamp-3">{t.description}</div>}
                     </div>
-                    {t.description && (
-                      <div className="mt-1 text-sm text-slate-700 line-clamp-3">{t.description}</div>
-                    )}
+                    <button
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                      onClick={() => {
+                        setSelectedToRemove((prev) => {
+                          const next = new Set(prev);
+                          next.delete(t.id);
+                          return next;
+                        });
+                      }}
+                    >
+                      <X size={12} /> Keep
+                    </button>
                   </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="fixed bottom-0 right-0 z-50 w-full max-w-xl border-t border-slate-200 bg-white px-4 py-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm text-slate-600">{removeList.length} item(s) ready</div>
+                <div className="flex items-center gap-2">
+                  <button className="rounded-md border border-slate-300 px-3 py-2 text-sm" onClick={() => setRemoveDrawerOpen(false)}>
+                    Cancel
+                  </button>
                   <button
-                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
-                    onClick={() => {
-                      setSelectedToRemove((prev) => {
-                        const next = new Set(prev);
-                        next.delete(t.id);
-                        return next;
-                      });
-                    }}
+                    className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 disabled:opacity-50"
+                    onClick={confirmRemove}
+                    disabled={removeList.length === 0 || removing}
                   >
-                    <X size={12} /> Keep
+                    {removing ? "Removing…" : `Confirm & Remove (${removeList.length})`}
                   </button>
                 </div>
               </div>
-            ))}
-          </div>
-
-          <div className="fixed bottom-0 right-0 z-50 w-full max-w-xl border-t border-slate-200 bg-white px-4 py-3">
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-slate-600">{removeList.length} item(s) ready</div>
-              <div className="flex items-center gap-2">
-                <button className="rounded-md border border-slate-300 px-3 py-2 text-sm" onClick={() => setRemoveDrawerOpen(false)}>
-                  Cancel
-                </button>
-                <button
-                  className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700 disabled:opacity-50"
-                  onClick={confirmRemove}
-                  disabled={removeList.length === 0 || removing}
-                >
-                  {removing ? "Removing…" : `Confirm & Remove (${removeList.length})`}
-                </button>
-              </div>
             </div>
           </div>
-        </div>
         </>
       )}
     </div>
@@ -593,7 +682,7 @@ function CategoryBlock({
   existing,
   selectedToAdd,
   selectedToRemove,
-  onToggle
+  onToggle,
 }: {
   title: string;
   items: CriteriaTemplate[];
@@ -605,12 +694,9 @@ function CategoryBlock({
   const [open, setOpen] = useState(true);
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <button
-        className="flex w-full items-center justify-between gap-3 px-4 py-3"
-        onClick={() => setOpen(o => !o)}
-      >
+      <button className="flex w-full items-center justify-between gap-3 px-4 py-3" onClick={() => setOpen((o) => !o)}>
         <div className="flex items-center gap-2">
-          {open ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
+          {open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
           <h2 className="text-lg font-semibold">{title}</h2>
         </div>
         <div className="text-xs text-slate-600">{items.length} items</div>
@@ -618,7 +704,7 @@ function CategoryBlock({
 
       {open && (
         <div className="divide-y divide-slate-100">
-          {items.map(t => {
+          {items.map((t) => {
             const isExisting = existing.has(t.id);
             const isChecked = isExisting ? selectedToRemove.has(t.id) : selectedToAdd.has(t.id);
 
@@ -638,11 +724,14 @@ function CategoryBlock({
                     </span>
                     {isExisting && (
                       <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-700">
-                        <CheckCircle2 size={12}/> Already added
+                        <CheckCircle2 size={12} /> Already added
                       </span>
                     )}
                     {!isExisting && t.default_due_offset_days != null && (
-                      <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700" title="Default due date is anchored to the selected anchor minus this offset">
+                      <span
+                        className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] text-slate-700"
+                        title="Default due date is anchored to the selected anchor minus this offset"
+                      >
                         −{t.default_due_offset_days} days
                       </span>
                     )}
@@ -650,7 +739,9 @@ function CategoryBlock({
                   {t.description && <div className="mt-1 text-sm text-slate-700">{t.description}</div>}
                   {t.meta?.prompts && Array.isArray(t.meta.prompts) && t.meta.prompts.length > 0 && (
                     <ul className="mt-1 list-disc pl-5 text-[12px] text-slate-600">
-                      {t.meta.prompts.slice(0, 3).map((p: string, i: number) => <li key={i}>{p}</li>)}
+                      {t.meta.prompts.slice(0, 3).map((p: string, i: number) => (
+                        <li key={i}>{p}</li>
+                      ))}
                     </ul>
                   )}
                 </div>

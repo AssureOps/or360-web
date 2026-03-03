@@ -11,7 +11,7 @@ export default function CreateProject() {
   const [sets, setSets] = useState<TemplateSet[]>([]);
   const [orgId, setOrgId] = useState<string>("");
   const [name, setName] = useState<string>("New Project");
-  const [status, setStatus] = useState<string>("active");
+  const [status, setStatus] = useState<string>("draft");
   const [templateSetId, setTemplateSetId] = useState<string>("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -106,11 +106,12 @@ export default function CreateProject() {
         <input value={name} onChange={e => setName(e.target.value)} className="w-full rounded-md border px-3 py-2" />
 
         <label className="mt-3 block text-sm text-slate-600">Initial status</label>
-        <select value={status} onChange={e => setStatus(e.target.value)} className="w-full rounded-md border px-3 py-2">
-          <option value="active">active</option>
-          <option value="planned">planned</option>
-          <option value="closed">closed</option>
-        </select>
+ <select value={status} onChange={e => setStatus(e.target.value)} className="w-full rounded-md border px-3 py-2">
+  <option value="draft">draft</option>
+  <option value="in_progress">in_progress</option>
+  <option value="ready">ready</option>
+  <option value="closed">closed</option>
+</select>
 
         <label className="mt-3 block text-sm text-slate-600">Template set</label>
         <select value={templateSetId} onChange={e => setTemplateSetId(e.target.value)} className="w-full rounded-md border px-3 py-2">

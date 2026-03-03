@@ -17,6 +17,7 @@ import Projects from "./Projects";
 import NewProject from "./NewProject";
 import Login from "./Login";
 import Join from "./Join";
+import Organisations from "./Organisations";
 
 import RequireAuth from "./components/RequireAuth";
 
@@ -52,6 +53,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
               <Route path="/projects/new" element={<NewProject />} />
               <Route path="/templates" element={<Templates />} />
               <Route path="/org-users" element={<OrgUsers />} />
+			  <Route path="/organisations" element={<Organisations />} />
 
               {/* Project-scoped pages */}
               <Route path="/projects/:id" element={<ProjectLayout />}>
