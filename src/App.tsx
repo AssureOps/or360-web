@@ -23,7 +23,7 @@ export type Criterion = {
   meta?: any;
   description?: string | null;
   section_order?: number | null;
-item_order?: number | null;
+  item_order?: number | null;
 };
 
 export type Note = {
@@ -79,6 +79,9 @@ export default function App() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({}); // category collapse
   const [compactView, setCompactView] = useState(true); // Compact vs Detailed
 
+  type QuickFilter = "blocked" | "overdue" | "high" | "evidence" | null;
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>(null);
+
   // Add Link modal
   const [linkForId, setLinkForId] = useState<string | null>(null);
   const [linkURL, setLinkURL] = useState("");
@@ -124,7 +127,9 @@ export default function App() {
   useEffect(() => {
     if (activeProjectId) {
       localStorage.setItem("lastProjectId", activeProjectId);
-      window.dispatchEvent(new CustomEvent("last-project-changed", { detail: activeProjectId }));
+      window.dispatchEvent(
+        new CustomEvent("last-project-changed", { detail: activeProjectId })
+      );
     }
   }, [activeProjectId]);
 
@@ -171,11 +176,13 @@ export default function App() {
     (async () => {
       const { data: crits, error } = await supabase
         .from("criteria")
-.select("id,project_id,title,status,category,section_order,item_order,description,meta,owner_email,due_date,caveat_reason,created_at,updated_at")
-.eq("project_id", activeProjectId)
-.order("section_order", { ascending: true, nullsFirst: false })
-.order("item_order", { ascending: true, nullsFirst: false })
-.order("title", { ascending: true });
+        .select(
+          "id,project_id,title,status,category,section_order,item_order,description,meta,owner_email,due_date,caveat_reason,created_at,updated_at"
+        )
+        .eq("project_id", activeProjectId)
+        .order("section_order", { ascending: true, nullsFirst: false })
+        .order("item_order", { ascending: true, nullsFirst: false })
+        .order("title", { ascending: true });
       if (error) {
         setErr(error.message);
         setLoading(false);
@@ -204,7 +211,9 @@ export default function App() {
   const filtered = useMemo(() => {
     const list = criteria ?? [];
     const q = search.trim().toLowerCase();
-    return list.filter((c) => {
+    const now = new Date();
+
+    const matchesSearch = (c: Criterion) => {
       if (!q) return true;
       const hay = [
         c.title,
@@ -216,43 +225,76 @@ export default function App() {
         .join(" ")
         .toLowerCase();
       return hay.includes(q);
-    });
-  }, [criteria, search]);
+    };
 
-const groupedList = useMemo(() => {
-  const map = new Map<
-    string,
-    { section_order: number; items: Criterion[] }
-  >();
+    const isHighSeverity = (c: Criterion) => {
+      const raw = (c.meta?.severity ?? c.meta?.SEVERITY ?? "").toString().toLowerCase();
+      return raw === "high" || raw === "critical";
+    };
 
-  for (const c of filtered) {
-    const cat = c.category ?? "Uncategorised";
-    const so = c.section_order ?? 999;
-    if (!map.has(cat)) map.set(cat, { section_order: so, items: [] });
+    const evidenceRequired = (c: Criterion) =>
+      !!(c.meta?.evidence_required ?? c.meta?.evidenceRequired ?? c.meta?.EVIDENCE_REQUIRED);
 
-    const g = map.get(cat)!;
-    g.section_order = Math.min(g.section_order, so);
-    g.items.push(c);
-  }
+    const evidenceCountByCriterion = new Map<string, number>();
+    for (const n of notes) {
+      if (n.kind === "note") continue;
+      evidenceCountByCriterion.set(
+        n.criterion_id,
+        (evidenceCountByCriterion.get(n.criterion_id) ?? 0) + 1
+      );
+    }
 
-  const groups = Array.from(map.entries()).map(([category, v]) => ({
-    category,
-    section_order: v.section_order,
-    items: v.items.sort(
-      (a, b) =>
-        (a.item_order ?? 9999) - (b.item_order ?? 9999) ||
-        a.title.localeCompare(b.title)
-    ),
-  }));
+    const matchesQuick = (c: Criterion) => {
+      if (!quickFilter) return true;
 
-  groups.sort(
-    (a, b) => a.section_order - b.section_order || a.category.localeCompare(b.category)
-  );
+      if (quickFilter === "blocked") return c.status === "delayed";
 
-  return groups;
-}, [filtered]);
+      if (quickFilter === "overdue") {
+        if (!c.due_date) return false;
+        if (c.status === "done") return false;
+        return new Date(c.due_date) < now;
+      }
 
+      if (quickFilter === "high") return c.status !== "done" && isHighSeverity(c);
 
+      if (quickFilter === "evidence") {
+        if (c.status === "done") return false;
+        if (!evidenceRequired(c)) return false;
+        return (evidenceCountByCriterion.get(c.id) ?? 0) === 0;
+      }
+
+      return true;
+    };
+
+    return list.filter((c) => matchesSearch(c) && matchesQuick(c));
+  }, [criteria, search, quickFilter, notes]);
+
+  const groupedList = useMemo(() => {
+    const map = new Map<string, { section_order: number; items: Criterion[] }>();
+
+    for (const c of filtered) {
+      const cat = c.category ?? "Uncategorised";
+      const so = c.section_order ?? 999;
+      if (!map.has(cat)) map.set(cat, { section_order: so, items: [] });
+
+      const g = map.get(cat)!;
+      g.section_order = Math.min(g.section_order, so);
+      g.items.push(c);
+    }
+
+    const groups = Array.from(map.entries()).map(([category, v]) => ({
+      category,
+      section_order: v.section_order,
+      items: v.items.sort(
+        (a, b) =>
+          (a.item_order ?? 9999) - (b.item_order ?? 9999) || a.title.localeCompare(b.title)
+      ),
+    }));
+
+    groups.sort((a, b) => a.section_order - b.section_order || a.category.localeCompare(b.category));
+
+    return groups;
+  }, [filtered]);
 
   const stats = useMemo(() => {
     const all = criteria ?? [];
@@ -265,12 +307,53 @@ const groupedList = useMemo(() => {
     return { total, done, inprog, delayed, caveat, notStarted };
   }, [criteria]);
 
+  const headerSummary = useMemo(() => {
+    const all = criteria ?? [];
+
+    const now = new Date();
+    const blockedCount = all.filter((c) => c.status === "delayed").length;
+
+    const overdueCount = all.filter((c) => {
+      if (!c.due_date) return false;
+      if (c.status === "done") return false;
+      return new Date(c.due_date) < now;
+    }).length;
+
+    const isHighSeverity = (c: Criterion) => {
+      const raw = (c.meta?.severity ?? c.meta?.SEVERITY ?? "").toString().toLowerCase();
+      return raw === "high" || raw === "critical";
+    };
+    const highOpenCount = all.filter((c) => c.status !== "done" && isHighSeverity(c)).length;
+
+    const evidenceRequired = (c: Criterion) =>
+      !!(c.meta?.evidence_required ?? c.meta?.evidenceRequired ?? c.meta?.EVIDENCE_REQUIRED);
+
+    const evidenceCountByCriterion = new Map<string, number>();
+    for (const n of notes) {
+      if (n.kind === "note") continue;
+      evidenceCountByCriterion.set(
+        n.criterion_id,
+        (evidenceCountByCriterion.get(n.criterion_id) ?? 0) + 1
+      );
+    }
+
+    const evidenceMissingCount = all.filter((c) => {
+      if (c.status === "done") return false;
+      if (!evidenceRequired(c)) return false;
+      return (evidenceCountByCriterion.get(c.id) ?? 0) === 0;
+    }).length;
+
+    const total = all.length;
+    const done = all.filter((c) => c.status === "done").length;
+    const readinessPct = total === 0 ? 0 : Math.round((done / total) * 100);
+
+    return { readinessPct, blockedCount, overdueCount, highOpenCount, evidenceMissingCount };
+  }, [criteria, notes]);
+
   /** Actions **/
   async function handleUpdateStatus(id: string, status: Criterion["status"]) {
     const snapshot = criteria;
-    setCriteria(
-      (prev) => prev?.map((c) => (c.id === id ? { ...c, status } : c)) ?? prev
-    );
+    setCriteria((prev) => prev?.map((c) => (c.id === id ? { ...c, status } : c)) ?? prev);
 
     const { error } = await supabase.rpc("set_criterion_status", {
       p_id: id,
@@ -327,9 +410,7 @@ const groupedList = useMemo(() => {
         note: v,
         created_by: currentUserEmail,
       })
-      .select(
-        "id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta"
-      )
+      .select("id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta")
       .single();
     if (error) {
       setErr(error.message);
@@ -384,56 +465,50 @@ const groupedList = useMemo(() => {
           note: noteText,
           created_by: currentUserEmail,
         })
-        .select(
-          "id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta"
-        )
+        .select("id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta")
         .single();
       if (noteRow) setNotes((prev) => [noteRow as Note, ...prev]);
     } catch {}
   }
 
   async function addLink(criterionId: string, url: string) {
-  const v = url.trim();
-  if (!v) return;
+    const v = url.trim();
+    if (!v) return;
 
-  // 1) Insert the link evidence
-  const { data, error } = await supabase
-    .from("evidence")
-    .insert({
-      criterion_id: criterionId,
-      kind: "link",
-      url: v,
-      created_by: currentUserEmail,
-    })
-    .select(
-      "id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta"
-    )
-    .single();
-
-  if (error) {
-    setErr(error.message);
-    return;
-  }
-  setNotes((prev) => [data as Note, ...prev]);
-
-  // 2) Insert an activity note
-  try {
-    const { data: noteRow } = await supabase
+    // 1) Insert the link evidence
+    const { data, error } = await supabase
       .from("evidence")
       .insert({
         criterion_id: criterionId,
-        kind: "note",
-        note: `Link added: ${v}`,
+        kind: "link",
+        url: v,
         created_by: currentUserEmail,
       })
-      .select(
-        "id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta"
-      )
+      .select("id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta")
       .single();
 
-    if (noteRow) setNotes((prev) => [noteRow as Note, ...prev]);
-  } catch {}
-}
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+    setNotes((prev) => [data as Note, ...prev]);
+
+    // 2) Insert an activity note
+    try {
+      const { data: noteRow } = await supabase
+        .from("evidence")
+        .insert({
+          criterion_id: criterionId,
+          kind: "note",
+          note: `Link added: ${v}`,
+          created_by: currentUserEmail,
+        })
+        .select("id,criterion_id,kind,note,url,uploaded_at,created_by,updated_at,meta")
+        .single();
+
+      if (noteRow) setNotes((prev) => [noteRow as Note, ...prev]);
+    } catch {}
+  }
 
   // Delete evidence (files & links only — notes are protected)
   async function deleteEvidence(evidenceId: string) {
@@ -541,6 +616,60 @@ const groupedList = useMemo(() => {
               <span className="text-red-600">⛔ Delayed: {stats.delayed}</span>
             </div>
 
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <button
+                onClick={() => setQuickFilter((v) => (v === "blocked" ? null : "blocked"))}
+                className={`rounded-xl border px-3 py-2 text-left text-sm ${
+                  quickFilter === "blocked"
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-200 bg-white hover:bg-slate-50"
+                }`}
+                title="Show delayed items"
+              >
+                <div className="text-xs opacity-70">Blockers</div>
+                <div className="text-lg font-semibold">{headerSummary.blockedCount}</div>
+              </button>
+
+              <button
+                onClick={() => setQuickFilter((v) => (v === "overdue" ? null : "overdue"))}
+                className={`rounded-xl border px-3 py-2 text-left text-sm ${
+                  quickFilter === "overdue"
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-200 bg-white hover:bg-slate-50"
+                }`}
+                title="Show overdue items"
+              >
+                <div className="text-xs opacity-70">Overdue</div>
+                <div className="text-lg font-semibold">{headerSummary.overdueCount}</div>
+              </button>
+
+              <button
+                onClick={() => setQuickFilter((v) => (v === "high" ? null : "high"))}
+                className={`rounded-xl border px-3 py-2 text-left text-sm ${
+                  quickFilter === "high"
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-200 bg-white hover:bg-slate-50"
+                }`}
+                title="Show high/critical open items"
+              >
+                <div className="text-xs opacity-70">High open</div>
+                <div className="text-lg font-semibold">{headerSummary.highOpenCount}</div>
+              </button>
+
+              <button
+                onClick={() => setQuickFilter((v) => (v === "evidence" ? null : "evidence"))}
+                className={`rounded-xl border px-3 py-2 text-left text-sm ${
+                  quickFilter === "evidence"
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-200 bg-white hover:bg-slate-50"
+                }`}
+                title="Show items missing required evidence"
+              >
+                <div className="text-xs opacity-70">Evidence missing</div>
+                <div className="text-lg font-semibold">{headerSummary.evidenceMissingCount}</div>
+              </button>
+            </div>
+
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <button
                 onClick={() => {
@@ -577,13 +706,17 @@ const groupedList = useMemo(() => {
                 <span className="text-xs text-slate-500">View:</span>
                 <button
                   onClick={() => setCompactView(true)}
-                  className={`rounded-md px-2 py-1 text-xs ${compactView ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+                  className={`rounded-md px-2 py-1 text-xs ${
+                    compactView ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"
+                  }`}
                 >
                   Compact
                 </button>
                 <button
                   onClick={() => setCompactView(false)}
-                  className={`rounded-md px-2 py-1 text-xs ${!compactView ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+                  className={`rounded-md px-2 py-1 text-xs ${
+                    !compactView ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"
+                  }`}
                 >
                   Detailed
                 </button>
@@ -595,6 +728,14 @@ const groupedList = useMemo(() => {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
+        {quickFilter && (
+          <button
+            onClick={() => setQuickFilter(null)}
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50"
+          >
+            Clear filter
+          </button>
+        )}
         <input
           className="w-72 rounded-xl border border-slate-200 px-3 py-2"
           placeholder="Search…"
@@ -604,42 +745,30 @@ const groupedList = useMemo(() => {
       </div>
 
       {loading && <EmptyState message="Loading criteria…" />}
-{!loading && groupedList.length === 0 && (
-  <EmptyState message="No criteria match." />
-)}
+      {!loading && groupedList.length === 0 && <EmptyState message="No criteria match." />}
 
       {/* Categories */}
       <div className="space-y-6">
-       {groupedList.map((g) => {
-  const cat = g.category;
-  const items = g.items;
+        {groupedList.map((g) => {
+          const cat = g.category;
+          const items = g.items;
           const doneCount = items.filter((i) => i.status === "done").length;
           const inprogCount = items.filter((i) => i.status === "in_progress").length;
           const delayedCount = items.filter((i) => i.status === "delayed").length;
           const caveatCount = items.filter((i) => i.status === "caveat").length;
-          const notStartedCount =
-            items.length - doneCount - inprogCount - delayedCount - caveatCount;
+          const notStartedCount = items.length - doneCount - inprogCount - delayedCount - caveatCount;
           const isCollapsed = collapsed[cat] ?? true; // default collapsed
 
           return (
-            <section
-              key={cat}
-              className="rounded-2xl border border-slate-200 bg-white shadow-sm"
-            >
+            <section key={cat} className="rounded-2xl border border-slate-200 bg-white shadow-sm">
               {/* Section header with collapse toggle */}
               <button
                 className="flex w-full items-center justify-between gap-3 px-4 py-3"
-                onClick={() =>
-                  setCollapsed((prev) => ({ ...prev, [cat]: !isCollapsed }))
-                }
+                onClick={() => setCollapsed((prev) => ({ ...prev, [cat]: !isCollapsed }))}
                 aria-expanded={!isCollapsed}
               >
                 <div className="flex items-center gap-2">
-                  {isCollapsed ? (
-                    <ChevronRight size={18} />
-                  ) : (
-                    <ChevronDown size={18} />
-                  )}
+                  {isCollapsed ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
                   <h2 className="text-lg font-semibold">{cat}</h2>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-slate-600">
@@ -662,8 +791,8 @@ const groupedList = useMemo(() => {
                 />
               </div>
 
-              {!isCollapsed && (
-                compactView ? (
+              {!isCollapsed &&
+                (compactView ? (
                   <div className="grid gap-2 px-4 pb-4">
                     {items.map((c) => (
                       <CriteriaRow
@@ -713,8 +842,8 @@ const groupedList = useMemo(() => {
                         });
 
                       // Last action
-                      const last = [...critNotes].sort(
-                        (a, b) => +new Date(a.uploaded_at) < +new Date(b.uploaded_at) ? 1 : -1
+                      const last = [...critNotes].sort((a, b) =>
+                        +new Date(a.uploaded_at) < +new Date(b.uploaded_at) ? 1 : -1
                       )[0];
                       const last_action = last
                         ? {
@@ -750,13 +879,12 @@ const groupedList = useMemo(() => {
                           onAddNote={(text) => addNote(c.id, text)}
                           onAddEvidenceFile={() => promptEvidenceUpload(c.id)}
                           onAddEvidenceLink={() => openLinkModal(c.id)}
-                          onRequestDeleteEvidence={(opts)=>openDeleteModal(opts)}
+                          onRequestDeleteEvidence={(opts) => openDeleteModal(opts)}
                         />
                       );
                     })}
                   </div>
-                )
-              )}
+                ))}
             </section>
           );
         })}
