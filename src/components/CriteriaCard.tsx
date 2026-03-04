@@ -89,6 +89,24 @@ function dotForStatus(s: CriteriaStatus) {
 }
 
 
+
+function chipForStatus(s: CriteriaStatus) {
+  switch (s) {
+    case "done":
+      return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    case "in_progress":
+      return "border-blue-200 bg-blue-50 text-blue-800";
+    case "delayed":
+      return "border-red-200 bg-red-50 text-red-800";
+    case "caveat":
+      return "border-purple-200 bg-purple-50 text-purple-800";
+    case "blocked":
+      return "border-amber-200 bg-amber-50 text-amber-800";
+    case "not_started":
+    default:
+      return "border-slate-200 bg-slate-50 text-slate-800";
+  }
+}
 function isImageUrl(u?: string) {
   if (!u) return false;
   return /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(u);
@@ -502,7 +520,7 @@ function TimelineList({
                 </div>
               </div>
 
-              <div className="flex shrink-0 items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex shrink-0 items-center gap-2">
                 {r.url && (
                   <a
                     href={absoluteUrl(r.url)}
@@ -618,7 +636,7 @@ function DetailsTab({
             setDueLocal(pristineDue);
           }}
           disabled={!dirty}
-        >chipForStatus
+        >
           Reset
         </button>
         <button
