@@ -1,5 +1,6 @@
 
 import { useMemo } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 
 type Status =
   | "not_started"
@@ -17,6 +18,7 @@ export default function CriteriaRow({
   due,
   onStatusChange,
   onOpen,
+  expanded,
 }: {
   title: string;
   severity?: "low" | "med" | "high" | string | null;
@@ -25,6 +27,7 @@ export default function CriteriaRow({
   due?: string | null;
   onStatusChange?: (next: Status) => void;
   onOpen?: () => void;
+  expanded?: boolean;
 }) {
   const statusClasses: Record<string, string> = {
     not_started: "bg-slate-100 text-slate-700",
@@ -46,15 +49,18 @@ export default function CriteriaRow({
   }, [due, status]);
 
   return (
-    <div className="w-full rounded-xl border border-slate-200 bg-white p-3">
+    <div className="w-full rounded-xl border border-slate-200 bg-white p-3 hover:bg-slate-50 transition-colors">
       <div className="flex items-center justify-between gap-3">
         <button
           type="button"
           onClick={onOpen}
-          className="min-w-0 text-left hover:opacity-90"
+          className="min-w-0 flex-1 text-left hover:opacity-90"
           aria-label={`Open ${title}`}
         >
           <div className="flex flex-wrap items-center gap-2">
+            <span className="mt-[1px] inline-flex h-4 w-4 items-center justify-center text-slate-500">
+              {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </span>
             <div className="truncate font-medium">{title}</div>
             {severity && (
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px]">

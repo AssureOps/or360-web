@@ -79,6 +79,8 @@ export default function App() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({}); // category collapse
   const [compactView, setCompactView] = useState(true); // Compact vs Detailed
 
+  const [expandedCriteria, setExpandedCriteria] = useState<Record<string, boolean>>({});
+
   type QuickFilter = "blocked" | "overdue" | "high" | "evidence" | null;
   const [quickFilter, setQuickFilter] = useState<QuickFilter>(null);
 
@@ -168,7 +170,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load criteria + evidence for active project
+    // Reset per-item expansion when switching projects
+  useEffect(() => {
+    setExpandedCriteria({});
+  }, [activeProjectId]);
+
+// Load criteria + evidence for active project
   useEffect(() => {
     if (!activeProjectId) return;
     setLoading(true);
@@ -354,6 +361,11 @@ export default function App() {
   async function handleUpdateStatus(id: string, status: Criterion["status"]) {
     const snapshot = criteria;
     setCriteria((prev) => prev?.map((c) => (c.id === id ? { ...c, status } : c)) ?? prev);
+
+    // UX: auto-expand the updated criterion in Compact view (tablet-friendly)
+    if (compactView) {
+      setExpandedCriteria((prev) => ({ ...prev, [id]: true }));
+    }
 
     const { error } = await supabase.rpc("set_criterion_status", {
       p_id: id,
@@ -542,6 +554,82 @@ export default function App() {
       if (f) uploadFile(criterionId, f);
     };
     input.click();
+  }
+
+  // Build the full expanded card UI for a single criterion (used in detailed view and in-row expansion)
+  function renderCriterionCard(c: Criterion) {
+    const critNotes = notes.filter((n) => n.criterion_id === c.id);
+
+    const activities = critNotes
+      .filter((n) => n.kind === "note")
+      .map((n) => ({
+        id: n.id,
+        type: "note" as const,
+        summary: n.note ?? "",
+        created_at: n.uploaded_at,
+        created_by: n.created_by ?? "Unknown",
+      }));
+
+    const evItems = critNotes
+      .filter((n) => n.kind !== "note")
+      .map((ev) => {
+        const isFile = ev.kind === "file";
+        const name =
+          (ev.file_path ?? "").split("/").pop() ||
+          (ev.url ?? "").split("/").pop() ||
+          (isFile ? "file" : ev.url ?? "link");
+        return {
+          id: ev.id,
+          name,
+          url: ev.url ?? undefined,
+          file: isFile,
+          created_at: ev.uploaded_at,
+          created_by: ev.created_by ?? "Unknown",
+        };
+      });
+
+    // Last action (most recent note/link/file)
+    const last = [...critNotes].sort((a, b) =>
+      +new Date(a.uploaded_at) < +new Date(b.uploaded_at) ? 1 : -1
+    )[0];
+
+    const last_action = last
+      ? {
+          type: last.kind,
+          summary:
+            last.kind === "note"
+              ? last.note ?? ""
+              : (last.url ?? (last as any).file_path ?? ""),
+          at: last.uploaded_at,
+          by: last.created_by ?? "Unknown",
+        }
+      : null;
+
+    return (
+      <CriteriaCard
+        key={c.id}
+        item={{
+          id: c.id,
+          title: c.title,
+          description: (c as any).description ?? c.meta?.description ?? "",
+          category: c.category ?? "",
+          severity: c.meta?.severity ?? "",
+          status: c.status as CriteriaStatus,
+          owner_email: c.owner_email ?? "",
+          due_date: c.due_date ?? "",
+          last_action,
+        }}
+        activities={activities}
+        evidence={evItems as any}
+        onChangeStatus={(next) => handleUpdateStatus(c.id, next as CriteriaStatus)}
+        onChangeOwner={(email) => updateOwner(c.id, email)}
+        onChangeDueDate={(dateISO) => updateDueDate(c.id, dateISO)}
+        onAddNote={(text) => addNote(c.id, text)}
+        onAddEvidenceFile={() => promptEvidenceUpload(c.id)}
+        onAddEvidenceLink={() => openLinkModal(c.id)}
+        onRequestDeleteEvidence={(opts) => openDeleteModal(opts)}
+      />
+    );
   }
 
   return (
@@ -772,6 +860,34 @@ export default function App() {
                   <h2 className="text-lg font-semibold">{cat}</h2>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-slate-600">
+                  {!isCollapsed && compactView && (
+                    <div className="hidden sm:flex items-center gap-2 mr-2">
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 hover:bg-slate-50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const updates: Record<string, boolean> = {};
+                          items.forEach((i) => (updates[i.id] = true));
+                          setExpandedCriteria((prev) => ({ ...prev, ...updates }));
+                        }}
+                      >
+                        Expand all
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700 hover:bg-slate-50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const updates: Record<string, boolean> = {};
+                          items.forEach((i) => (updates[i.id] = false));
+                          setExpandedCriteria((prev) => ({ ...prev, ...updates }));
+                        }}
+                      >
+                        Collapse all
+                      </button>
+                    </div>
+                  )}
                   <span className="text-green-700">✅ {doneCount}</span>
                   <span className="text-amber-700">🔶 {inprogCount}</span>
                   <span className="text-purple-700">☑️ {caveatCount}</span>
@@ -794,20 +910,31 @@ export default function App() {
               {!isCollapsed &&
                 (compactView ? (
                   <div className="grid gap-2 px-4 pb-4">
-                    {items.map((c) => (
-                      <CriteriaRow
-                        key={c.id}
-                        title={c.title}
-                        severity={c.meta?.severity ?? c.meta?.SEVERITY}
-                        status={c.status as any}
-                        owner={c.owner_email ?? undefined}
-                        due={c.due_date ?? undefined}
-                        onStatusChange={(s) => handleUpdateStatus(c.id, s as any)}
-                        onOpen={() => {
-                          // keep inline flow; nothing to open
-                        }}
-                      />
-                    ))}
+                    {items.map((c) => {
+                      const isExpanded = !!expandedCriteria[c.id];
+
+                      return (
+                        <div key={c.id} className="space-y-2">
+                          <CriteriaRow
+                            title={c.title}
+                            expanded={isExpanded}
+                            severity={c.meta?.severity ?? c.meta?.SEVERITY}
+                            status={c.status as any}
+                            owner={c.owner_email ?? undefined}
+                            due={c.due_date ?? undefined}
+                            onStatusChange={(s) => handleUpdateStatus(c.id, s as any)}
+                            onOpen={() =>
+                              setExpandedCriteria((prev) => ({
+                                ...prev,
+                                [c.id]: !prev[c.id],
+                              }))
+                            }
+                          />
+
+                          {isExpanded && renderCriterionCard(c)}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="grid gap-3 px-4 pb-4">
