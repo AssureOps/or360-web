@@ -19,6 +19,7 @@ export default function CriteriaRow({
   onStatusChange,
   onOpen,
   expanded,
+  taskProgress,
 }: {
   title: string;
   severity?: "low" | "med" | "high" | string | null;
@@ -28,6 +29,7 @@ export default function CriteriaRow({
   onStatusChange?: (next: Status) => void;
   onOpen?: () => void;
   expanded?: boolean;
+  taskProgress?: { complete: number; total: number } | null;
 }) {
   const statusClasses: Record<string, string> = {
     not_started: "bg-slate-100 text-slate-700",
@@ -73,6 +75,17 @@ export default function CriteriaRow({
             {due && (
               <span className={isOverdue ? "text-red-600 font-medium" : ""}>
                 📅 {due}{isOverdue && " • overdue"}
+              </span>
+            )}
+            {taskProgress && taskProgress.total > 0 && (
+              <span className={
+                taskProgress.complete === taskProgress.total
+                  ? "text-emerald-600 font-medium"
+                  : taskProgress.complete > 0
+                  ? "text-blue-600"
+                  : "text-slate-500"
+              }>
+                ✓ {taskProgress.complete}/{taskProgress.total} tasks
               </span>
             )}
           </div>

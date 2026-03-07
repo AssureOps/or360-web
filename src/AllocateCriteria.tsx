@@ -294,8 +294,57 @@ export default function AllocateCriteria() {
     if (!projectId || !orgId || draftRows.length === 0) return;
     setInserting(true);
     try {
-      const { error } = await supabase.from("criteria").insert(draftRows);
+      // 1) Insert the criteria rows, getting back the new ids + template_ids
+      const { data: inserted, error } = await supabase
+        .from("criteria")
+        .insert(draftRows)
+        .select("id,template_id");
       if (error) throw error;
+
+      // 2) Fetch all default tasks for the templates we just added
+      const templateIds = draftRows.map((r) => r.template_id).filter(Boolean);
+      if (templateIds.length && inserted && inserted.length) {
+        const { data: taskTemplates, error: ttErr } = await supabase
+          .from("criteria_task_templates")
+          .select("id,criteria_template_id,title,description,item_order,hint")
+          .in("criteria_template_id", templateIds)
+          .eq("is_active", true)
+          .order("item_order", { ascending: true, nullsFirst: false });
+
+        if (ttErr) throw ttErr;
+
+        if (taskTemplates && taskTemplates.length) {
+          // Build a map of template_id -> new criterion id
+          const criterionByTemplate: Record<string, string> = {};
+          for (const row of inserted) {
+            if (row.template_id) criterionByTemplate[row.template_id] = row.id;
+          }
+
+          // Build task rows
+          const taskRows = taskTemplates
+            .map((tt: any) => {
+              const criteriaId = criterionByTemplate[tt.criteria_template_id];
+              if (!criteriaId) return null;
+              return {
+                criteria_id: criteriaId,
+                project_id: projectId,
+                org_id: orgId,
+                title: tt.title,
+                description: tt.description ?? null,
+                status: "not_started" as const,
+                item_order: tt.item_order ?? null,
+                template_task_id: tt.id,
+                hint: tt.hint ?? null,
+              };
+            })
+            .filter(Boolean);
+
+          if (taskRows.length) {
+            const { error: taskErr } = await supabase.from("criteria_tasks").insert(taskRows);
+            if (taskErr) throw taskErr;
+          }
+        }
+      }
 
       await refreshExisting();
       setAddDrawerOpen(false);

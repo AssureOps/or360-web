@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { generateCertificate } from "./lib/certificate";
 import { Link } from "react-router-dom";
 
-import CriteriaCard, { type CriteriaStatus } from "./components/CriteriaCard";
+import CriteriaCard, { type CriteriaStatus, type CriteriaTask, type CriteriaTaskStatus } from "./components/CriteriaCard";
 import CriteriaRow from "./components/CriteriaRow";
 import ConfirmDialog from "./components/ConfirmDialog";
 
@@ -24,6 +24,9 @@ export type Criterion = {
   description?: string | null;
   section_order?: number | null;
   item_order?: number | null;
+  hint_what?: string | null;
+  hint_good?: string | null;
+  hint_next?: string | null;
 };
 
 export type Evidence = {
@@ -45,6 +48,7 @@ export type Project = {
   id: string;
   name: string;
   status: string;
+  org_id: string;
   created_at: string;
 };
 
@@ -171,6 +175,7 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [criteria, setCriteria] = useState<Criterion[] | null>(null);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
+  const [tasks, setTasks] = useState<CriteriaTask[]>([]);
 
   const activeProject = useMemo(
     () => (projects || []).find((p) => p.id === activeProjectId) || null,
@@ -261,7 +266,7 @@ export default function App() {
 
       const { data, error } = await supabase
         .from("projects")
-        .select("id,name,status,created_at")
+        .select("id,name,status,org_id,created_at")
         .order("created_at", { ascending: false })
         .limit(1000);
 
@@ -278,6 +283,7 @@ export default function App() {
   // Reset per-item expansion when switching projects
   useEffect(() => {
     setExpandedCriteria({});
+    setTasks([]);
   }, [activeProjectId]);
 
   // Load criteria + evidence for active project
@@ -290,7 +296,7 @@ export default function App() {
       const { data: crits, error } = await supabase
         .from("criteria")
         .select(
-          "id,project_id,title,status,category,section_order,item_order,description,meta,owner_email,due_date,caveat_reason,created_at,updated_at"
+          "id,project_id,title,status,category,section_order,item_order,description,meta,owner_email,due_date,caveat_reason,created_at,updated_at,criteria_templates(hint_what,hint_good,hint_next)"
         )
         .eq("project_id", activeProjectId)
         .order("section_order", { ascending: true, nullsFirst: false })
@@ -303,7 +309,13 @@ export default function App() {
         return;
       }
 
-      const critList = (crits ?? []) as Criterion[];
+      // Flatten hint fields from the criteria_templates join onto each criterion
+      const critList = (crits ?? []).map((c: any) => ({
+        ...c,
+        hint_what: c.criteria_templates?.hint_what ?? null,
+        hint_good: c.criteria_templates?.hint_good ?? null,
+        hint_next: c.criteria_templates?.hint_next ?? null,
+      })) as Criterion[];
       setCriteria(critList);
 
       const ids = critList.map((c) => c.id);
@@ -317,8 +329,18 @@ export default function App() {
 
         if (evErr) setErr(evErr.message);
         setEvidence((ev ?? []) as Evidence[]);
+
+        const { data: taskData, error: taskErr } = await supabase
+          .from("criteria_tasks")
+          .select("id,criteria_id,title,description,status,assignee_user_id,due_date,item_order,template_task_id,hint")
+          .in("criteria_id", ids)
+          .order("item_order", { ascending: true, nullsFirst: false });
+
+        if (taskErr) setErr(taskErr.message);
+        setTasks((taskData ?? []) as CriteriaTask[]);
       } else {
         setEvidence([]);
+        setTasks([]);
       }
 
       setLoading(false);
@@ -649,6 +671,38 @@ export default function App() {
     }
   }
 
+  async function handleTaskStatusChange(taskId: string, next: CriteriaTaskStatus) {
+    setTasks((prev) =>
+      prev.map((t) => (t.id === taskId ? { ...t, status: next } : t))
+    );
+    await supabase.from("criteria_tasks").update({ status: next }).eq("id", taskId);
+  }
+
+  async function handleTaskAdd(criterionId: string, title: string) {
+    const projectId = activeProjectId;
+    if (!projectId) return;
+    const orgId = activeProject?.org_id;
+    if (!orgId) { setErr("Cannot add task: project org_id not found."); return; }
+    const { data, error } = await supabase
+      .from("criteria_tasks")
+      .insert({
+        criteria_id: criterionId,
+        project_id: projectId,
+        org_id: orgId,
+        title,
+        status: "not_started",
+      })
+      .select("id,criteria_id,title,description,status,assignee_user_id,due_date,item_order,template_task_id,hint")
+      .single();
+    if (error) { setErr(error.message); return; }
+    if (data) setTasks((prev) => [...prev, data as CriteriaTask]);
+  }
+
+  async function handleTaskDelete(taskId: string) {
+    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    await supabase.from("criteria_tasks").delete().eq("id", taskId);
+  }
+
   function promptEvidenceUpload(criterionId: string) {
     const input = document.createElement("input");
     input.type = "file";
@@ -661,6 +715,7 @@ export default function App() {
 
   function renderCriterionCard(c: Criterion) {
     const critEvidence = evidence.filter((n) => n.criterion_id === c.id);
+    const critTasks = tasks.filter((t) => t.criteria_id === c.id);
 
     const activities = critEvidence
       .filter((n) => n.kind === "note")
@@ -714,6 +769,9 @@ export default function App() {
           owner_email: c.owner_email ?? "",
           due_date: c.due_date ?? "",
           last_action,
+          hint_what: c.hint_what ?? null,
+          hint_good: c.hint_good ?? null,
+          hint_next: c.hint_next ?? null,
         }}
         activities={activities}
         evidence={evItems as any}
@@ -724,6 +782,10 @@ export default function App() {
         onAddEvidenceFile={() => promptEvidenceUpload(c.id)}
         onAddEvidenceLink={() => openLinkModal(c.id)}
         onRequestDeleteEvidence={(opts) => openDeleteModal(opts)}
+        tasks={critTasks}
+        onTaskStatusChange={(taskId, next) => handleTaskStatusChange(taskId, next)}
+        onTaskAdd={(title) => handleTaskAdd(c.id, title)}
+        onTaskDelete={(taskId) => handleTaskDelete(taskId)}
       />
     );
   }
@@ -1019,6 +1081,10 @@ export default function App() {
                                   [c.id]: !prev[c.id],
                                 }))
                               }
+                              taskProgress={(() => {
+                                const t = tasks.filter((t) => t.criteria_id === c.id && t.status !== "not_applicable");
+                                return t.length > 0 ? { complete: t.filter((t) => t.status === "complete").length, total: t.length } : null;
+                              })()}
                             />
 
                             {isExpanded && renderCriterionCard(c)}

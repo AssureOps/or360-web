@@ -44,12 +44,31 @@ type Item = {
   owner_email?: string;
   due_date?: string;
   last_action?: LastAction;
+  hint_what?: string | null;
+  hint_good?: string | null;
+  hint_next?: string | null;
+};
+
+export type CriteriaTaskStatus = "not_started" | "in_progress" | "complete" | "not_applicable";
+
+export type CriteriaTask = {
+  id: string;
+  criteria_id: string;
+  title: string;
+  description?: string | null;
+  status: CriteriaTaskStatus;
+  assignee_user_id?: string | null;
+  due_date?: string | null;
+  item_order?: number | null;
+  template_task_id?: string | null;
+  hint?: string | null;
 };
 
 type Props = {
   item: Item;
   activities: Activity[]; // notes only
   evidence: EvidenceRow[]; // links/files only
+  tasks?: CriteriaTask[];
   onChangeStatus: (next: CriteriaStatus) => void;
   onChangeOwner: (email: string) => void;
   onChangeDueDate: (iso: string | null) => void;
@@ -57,6 +76,9 @@ type Props = {
   onAddEvidenceFile: () => void; // file picker handled in parent
   onAddEvidenceLink: () => void; // ConfirmDialog handled in parent
   onRequestDeleteEvidence?: (opts: { id: string; name: string }) => void;
+  onTaskStatusChange?: (taskId: string, next: CriteriaTaskStatus) => void;
+  onTaskAdd?: (title: string) => void;
+  onTaskDelete?: (taskId: string) => void;
 };
 
 /* ---------- helpers ---------- */
@@ -139,6 +161,7 @@ export default function CriteriaCard({
   item,
   activities,
   evidence,
+  tasks = [],
   onChangeStatus,
   onChangeOwner,
   onChangeDueDate,
@@ -146,6 +169,9 @@ export default function CriteriaCard({
   onAddEvidenceFile,
   onAddEvidenceLink,
   onRequestDeleteEvidence,
+  onTaskStatusChange,
+  onTaskAdd,
+  onTaskDelete,
 }: Props) {
   // Progressive composer
   const [composerOpen, setComposerOpen] = useState(false);
@@ -278,6 +304,23 @@ export default function CriteriaCard({
 
         <StatusSelect value={item.status} onChange={onChangeStatus} />
       </div>
+
+      {/* Hint */}
+      {(item.hint_what || item.hint_good || item.hint_next) && (
+        <HintPanel
+          hint_what={item.hint_what}
+          hint_good={item.hint_good}
+          hint_next={item.hint_next}
+        />
+      )}
+
+      {/* Tasks */}
+      <TasksPanel
+        tasks={tasks}
+        onTaskStatusChange={onTaskStatusChange}
+        onTaskAdd={onTaskAdd}
+        onTaskDelete={onTaskDelete}
+      />
 
       {/* Composer (progressive) */}
       <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-3">
@@ -557,6 +600,269 @@ function TimelineList({
         );
       })}
     </ul>
+    </div>
+  );
+}
+
+const TASK_STATUS_LABEL: Record<CriteriaTaskStatus, string> = {
+  not_started: "Not started",
+  in_progress: "In progress",
+  complete: "Complete",
+  not_applicable: "N/A",
+};
+
+const TASK_STATUS_CYCLE: CriteriaTaskStatus[] = [
+  "not_started",
+  "in_progress",
+  "complete",
+  "not_applicable",
+];
+
+function taskStatusDot(s: CriteriaTaskStatus) {
+  switch (s) {
+    case "not_started": return "border-slate-300 bg-white";
+    case "in_progress": return "border-blue-400 bg-blue-100";
+    case "complete": return "border-emerald-500 bg-emerald-500";
+    case "not_applicable": return "border-slate-200 bg-slate-100";
+  }
+}
+
+/* ---------- HintPanel ---------- */
+function HintPanel({
+  hint_what,
+  hint_good,
+  hint_next,
+}: {
+  hint_what?: string | null;
+  hint_good?: string | null;
+  hint_next?: string | null;
+}) {
+  return (
+    <details className="mt-4 rounded-xl border border-blue-100 bg-blue-50">
+      <summary className="cursor-pointer list-none px-3 py-2 text-sm font-semibold text-blue-900 select-none">
+        <span className="mr-2">💡</span>Guidance
+      </summary>
+      <div className="border-t border-blue-100 divide-y divide-blue-100">
+        {hint_what && (
+          <div className="px-3 py-2">
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-blue-700">
+              What this means
+            </div>
+            <p className="text-sm text-slate-700">{hint_what}</p>
+          </div>
+        )}
+        {hint_good && (
+          <div className="px-3 py-2">
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-blue-700">
+              What good looks like
+            </div>
+            <p className="text-sm text-slate-700">{hint_good}</p>
+          </div>
+        )}
+        {hint_next && (
+          <div className="px-3 py-2">
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-blue-700">
+              Potential next steps
+            </div>
+            <p className="text-sm text-slate-700">{hint_next}</p>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function TaskRow({
+  task,
+  onCycle,
+  onDelete,
+}: {
+  task: CriteriaTask;
+  onCycle: () => void;
+  onDelete?: () => void;
+}) {
+  const [hintOpen, setHintOpen] = useState(false);
+
+  return (
+    <li className="group px-3 py-2 hover:bg-slate-50">
+      <div className="flex items-center gap-3">
+        {/* Status dot */}
+        <button
+          type="button"
+          title={`Status: ${TASK_STATUS_LABEL[task.status]} — click to advance`}
+          onClick={onCycle}
+          className={`shrink-0 h-4 w-4 rounded-full border-2 transition-colors ${taskStatusDot(task.status)}`}
+        />
+
+        {/* Title + hint toggle */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`text-sm ${
+                task.status === "complete"
+                  ? "text-slate-400 line-through"
+                  : task.status === "not_applicable"
+                  ? "text-slate-400 italic"
+                  : "text-slate-800"
+              }`}
+            >
+              {task.title}
+            </span>
+            {task.hint && (
+              <button
+                type="button"
+                onClick={() => setHintOpen((v) => !v)}
+                title={hintOpen ? "Hide guidance" : "Show guidance"}
+                className="shrink-0 text-slate-300 hover:text-blue-400 transition-colors"
+                aria-label="Toggle task hint"
+              >
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a.75.75 0 1 0 0 1.5A.75.75 0 0 0 8 5zm-.75 2.75a.75.75 0 0 1 1.5 0V11a.75.75 0 0 1-1.5 0V7.75z"/>
+                </svg>
+              </button>
+            )}
+          </div>
+          {task.description && (
+            <div className="text-xs text-slate-500 mt-0.5">{task.description}</div>
+          )}
+          {hintOpen && task.hint && (
+            <div className="mt-1.5 rounded-md bg-blue-50 border border-blue-100 px-2.5 py-1.5 text-xs text-blue-800 leading-relaxed">
+              {task.hint}
+            </div>
+          )}
+        </div>
+
+        {/* Status label */}
+        <span className="shrink-0 text-xs text-slate-400 hidden sm:inline">
+          {TASK_STATUS_LABEL[task.status]}
+        </span>
+
+        {/* Delete */}
+        {onDelete && (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="shrink-0 text-xs text-slate-300 opacity-0 group-hover:opacity-100 hover:text-rose-500 transition-opacity"
+            title="Remove task"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function TasksPanel({
+  tasks,
+  onTaskStatusChange,
+  onTaskAdd,
+  onTaskDelete,
+}: {
+  tasks: CriteriaTask[];
+  onTaskStatusChange?: (taskId: string, next: CriteriaTaskStatus) => void;
+  onTaskAdd?: (title: string) => void;
+  onTaskDelete?: (taskId: string) => void;
+}) {
+  const [addingTask, setAddingTask] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+
+  const sorted = [...tasks].sort(
+    (a, b) => (a.item_order ?? 9999) - (b.item_order ?? 9999)
+  );
+
+  const completedCount = tasks.filter((t) => t.status === "complete").length;
+  const totalCount = tasks.filter((t) => t.status !== "not_applicable").length;
+
+  function cycleStatus(task: CriteriaTask) {
+    if (!onTaskStatusChange) return;
+    const idx = TASK_STATUS_CYCLE.indexOf(task.status);
+    const next = TASK_STATUS_CYCLE[(idx + 1) % TASK_STATUS_CYCLE.length];
+    onTaskStatusChange(task.id, next);
+  }
+
+  function submitNewTask() {
+    const t = newTaskTitle.trim();
+    if (!t || !onTaskAdd) return;
+    onTaskAdd(t);
+    setNewTaskTitle("");
+    setAddingTask(false);
+  }
+
+  return (
+    <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold">Tasks</span>
+          {totalCount > 0 && (
+            <span className="text-xs text-slate-500">
+              {completedCount}/{totalCount} done
+            </span>
+          )}
+        </div>
+        {onTaskAdd && (
+          <button
+            type="button"
+            className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100"
+            onClick={() => setAddingTask((v) => !v)}
+          >
+            {addingTask ? "Cancel" : "+ Add task"}
+          </button>
+        )}
+      </div>
+
+      {/* Progress bar */}
+      {totalCount > 0 && (
+        <div className="h-1 w-full bg-slate-100">
+          <div
+            className="h-1 bg-emerald-500 transition-all"
+            style={{ width: `${Math.round((completedCount / totalCount) * 100)}%` }}
+          />
+        </div>
+      )}
+
+      {/* Task list */}
+      {sorted.length === 0 && !addingTask ? (
+        <div className="px-3 py-3 text-sm text-slate-500">No tasks yet.</div>
+      ) : (
+        <ul className="divide-y divide-slate-50">
+          {sorted.map((task) => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              onCycle={() => cycleStatus(task)}
+              onDelete={onTaskDelete ? () => onTaskDelete(task.id) : undefined}
+            />
+          ))}
+        </ul>
+      )}
+
+      {/* Add task inline */}
+      {addingTask && (
+        <div className="border-t border-slate-100 px-3 py-2 flex items-center gap-2">
+          <input
+            autoFocus
+            type="text"
+            value={newTaskTitle}
+            onChange={(e) => setNewTaskTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitNewTask();
+              if (e.key === "Escape") { setAddingTask(false); setNewTaskTitle(""); }
+            }}
+            placeholder="Task title…"
+            className="flex-1 rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+          />
+          <button
+            type="button"
+            onClick={submitNewTask}
+            disabled={!newTaskTitle.trim()}
+            className="rounded-md bg-slate-900 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+          >
+            Add
+          </button>
+        </div>
+      )}
     </div>
   );
 }
